@@ -8,7 +8,7 @@
 | ArtifactId | `bi-module-analysis-biz` |
 | 模块定位 | 智能分析任务业务编排 |
 | 版本 | V1.0-draft |
-| 上游依赖 | `bi-common`、`bi-infra`、`bi-ai-runtime`、`bi-module-user-biz` |
+| 上游依赖 | `bi-common`、`bi-infra`、`bi-ai-runtime`、`bi-module-user-biz`、`bi-module-chart-biz` |
 | 文档状态 | 初稿，待评审 |
 
 ## 1. 需求分析
@@ -330,10 +330,11 @@ ChartController ───────────────┐
 BiMessageConsumer ─────────────┤─ AnalysisPromptBuilder
                                ├─ AiChatClient
                                ├─ AnalysisResultParser
-                               └─ ChartService / ChartMapper
+                               └─ ChartApplicationService
+                                  （受限任务上下文 / 状态结果 DTO）
 ```
 
-Controller 只负责 HTTP 参数、登录用户和响应封装；MQ Consumer 只负责接收任务标识和确认消息。两者不得各自维护 Prompt、AI 调用和结果解析代码。
+`ChartApplicationService` 由 `bi-module-chart-biz` 提供。analysis-biz 只通过受限的任务上下文和状态/结果 DTO 读写图表，不依赖 `ChartService`、`ChartMapper`，也不直接持有可任意修改的 Chart 持久化实体。调用 AI 的长事务不得包住任务状态更新；创建、领取、成功、失败和重试状态分别通过短事务持久化，确保 AI 异常后 FAILED 不会因外层事务回滚而丢失。Controller 只负责 HTTP 参数、登录用户和响应封装；MQ Consumer 只负责接收任务标识和确认消息。两者不得各自维护 Prompt、AI 调用和结果解析代码。
 
 旧 `AiResponseParser` 的能力迁移为 `analysis/parser/AnalysisResultParser`，对外返回明确的 `AnalysisResult`，不再使用无语义的字符串数组。旧 `AiManager` 在所有调用方切换到 `AiChatClient` 后删除。
 

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.yupi.springbootinit.mapper.ChartMapper">
+
+    <resultMap id="BaseResultMap" type="com.yupi.springbootinit.model.entity.Chart">
+            <id property="id" column="id" jdbcType="BIGINT"/>
+            <result property="name" column="name" jdbcType="VARCHAR"/>
+            <result property="goal" column="goal" jdbcType="VARCHAR"/>
+            <result property="chartData" column="chartData" jdbcType="VARCHAR"/>
+            <result property="chartType" column="chartType" jdbcType="VARCHAR"/>
+            <result property="genChart" column="genChart" jdbcType="VARCHAR"/>
+            <result property="genResult" column="genResult" jdbcType="VARCHAR"/>
+            <result property="status" column="status" jdbcType="VARCHAR"/>
+            <result property="execMessage" column="execMessage" jdbcType="VARCHAR"/>
+            <result property="userId" column="userId" jdbcType="BIGINT"/>
+            <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
+            <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
+            <result property="isDelete" column="isDelete" jdbcType="TINYINT"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id,`name`,goal,chartData,
+        chartType,genChart,genResult,status,execMessage,userId,
+        createTime,updateTime,isDelete
+    </sql>
+
+    <!-- 只有成功领取 WAITING 任务的消费者可以调用模型；兼容历史 wait 状态。 -->
+    <update id="tryStartAnalysis">
+        UPDATE chart
+        SET status = 'RUNNING', updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND isDelete = 0
+          AND UPPER(status) IN ('WAITING', 'WAIT')
+    </update>
+
+    <!-- 结果只允许由仍处于 RUNNING 的任务写入，防止过期执行覆盖新状态。 -->
+    <update id="completeAnalysis">
+        UPDATE chart
+        SET genChart = #{genChart},
+            genResult = #{genResult},
+            execMessage = NULL,
+            status = 'SUCCEEDED',
+            updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND isDelete = 0
+          AND UPPER(status) = 'RUNNING'
+    </update>
+
+    <!-- 错误信息已在应用层脱敏，这里仍限定只更新当前运行任务。 -->
+    <update id="failAnalysis">
+        UPDATE chart
+        SET execMessage = #{execMessage},
+            status = 'FAILED',
+            updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND isDelete = 0
+          AND UPPER(status) = 'RUNNING'
+    </update>
+
+    <!-- 重试同时校验归属与失败状态，防止并发重试或跨用户调用。 -->
+    <update id="prepareRetry">
+        UPDATE chart
+        SET status = 'WAITING',
+            execMessage = NULL,
+            updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND userId = #{userId}
+          AND isDelete = 0
+          AND UPPER(status) = 'FAILED'
+    </update>
+
+    <!-- 条件逻辑删除，避免任务在检查后刚好被领取时仍被删除。 -->
+    <update id="deleteIfNotRunning">
+        UPDATE chart
+        SET isDelete = 1, updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND isDelete = 0
+          AND (status IS NULL OR UPPER(status) &lt;&gt; 'RUNNING')
+    </update>
+</mapper>

@@ -10,24 +10,23 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * 更新请求
+ * 编辑请求
  *
  * @author <a href="https://github.com/liyupi">程序员鱼皮</a>
  * @from <a href="https://yupi.icu">编程导航知识星球</a>
  */
 @Data
-public class ChartUpdateRequest implements Serializable {
-
-    /**
-     * id
-     */
-    @TableId(type = IdType.ASSIGN_ID)
-    private Long id;
+public class ChartEditRequest implements Serializable {
 
     /**
      * 名称
      */
     private String name;
+
+    /**
+     * id
+     */
+    private Long id;
 
     /**
      * 分析目标
@@ -43,32 +42,6 @@ public class ChartUpdateRequest implements Serializable {
      * 图表类型
      */
     private String chartType;
-
-    /**
-     * 生成的图表数据
-     */
-    private String genChart;
-
-    /**
-     * 生成的分析结论
-     */
-    private String genResult;
-
-    /**
-     * 创建时间
-     */
-    private Date createTime;
-
-    /**
-     * 更新时间
-     */
-    private Date updateTime;
-
-    /**
-     * 是否删除
-     */
-    @TableLogic
-    private Integer isDelete;
 
     private static final long serialVersionUID = 1L;
 }
