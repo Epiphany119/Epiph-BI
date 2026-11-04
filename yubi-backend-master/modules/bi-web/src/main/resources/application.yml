@@ -1,6 +1,6 @@
 spring:
   application:
-    name: yubi-backend
+    name: epiph-bi-backend
   # 默认加载本地环境；隐私配置从 resources/application-local.yml 读取
   profiles:
     active: local

@@ -1,57 +1,22 @@
-# 鱼智能 BI
+# Epiph-BI 前端
 
-This project is initialized with [鱼智能 BI](https://pro.ant.design). Follow is the quick guide for how to use.
+Copyright © 2026 Epiphany119.
 
-## Environment Prepare
+前端使用 React 18、Umi Max 和 Ant Design Pro，提供登录、智能分析、异步分析和图表管理界面。
 
-Install `node_modules`:
-
-```bash
-npm install
-```
-
-or
+## 本地运行
 
 ```bash
-yarn
+pnpm install
+pnpm start:dev
 ```
 
-## Provided Scripts
+默认访问地址为 `http://localhost:8000`。后端服务需要另行启动，默认 API 地址为 `http://localhost:8080/api`。
 
-鱼智能 BI provides some useful script to help you quick start and build with web project, code style check and test.
-
-Scripts provided in `package.json`. It's safe to modify or add additional script:
-
-### Start project
+## 常用命令
 
 ```bash
-npm start
+pnpm build
+pnpm lint
+pnpm test
 ```
-
-### Build project
-
-```bash
-npm run build
-```
-
-### Check code style
-
-```bash
-npm run lint
-```
-
-You can also use script to auto fix some lint error:
-
-```bash
-npm run lint:fix
-```
-
-### Test code
-
-```bash
-npm test
-```
-
-## More
-
-You can view full document on our [official website](https://pro.ant.design). And welcome any feedback in our [github](https://github.com/ant-design/ant-design-pro).

@@ -7,7 +7,7 @@
     <artifactId>smart-bi-parent</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
-    <name>smart-bi-parent</name>
+    <name>Epiph-BI</name>
 
     <modules>
         <module>yubi-backend-master</module>

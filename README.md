@@ -1,6 +1,8 @@
-# 智能 BI 实习项目
+# Epiph-BI
 
-基于 React + Spring Boot + RabbitMQ + AIGC 的智能数据分析平台，适合作为 IntelliJ IDEA 中的 Java 后端实习项目。
+> Copyright © 2026 Epiphany119. 本项目基于上游模板进行二次开发；上游作者与来源标注保留在对应文件中。
+
+基于 React + Spring Boot + RabbitMQ + AIGC 的智能数据分析平台。
 
 ## 项目结构
 

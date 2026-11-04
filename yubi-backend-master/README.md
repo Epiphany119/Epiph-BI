@@ -1,4 +1,6 @@
-# SpringBoot 项目初始模板
+# Epiph-BI 后端
+
+> 当前项目由 Epiphany119 基于下方上游模板进行二次开发；保留原作者和来源信息。
 
 > 作者：[程序员鱼皮](https://github.com/liyupi)
 > 仅分享于 [编程导航知识星球](https://yupi.icu)

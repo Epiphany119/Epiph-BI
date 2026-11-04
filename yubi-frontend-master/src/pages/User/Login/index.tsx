@@ -86,12 +86,8 @@ const Login: React.FC = () => {
             maxWidth: '75vw',
           }}
           logo={<img alt="logo" src="/logo.svg" />}
-          title="鱼智能 BI"
-          subTitle={
-            <a href="https://yupi.icu" target="_blank">
-              编程导航知识星球的原创项目
-            </a>
-          }
+          title="Epiph-BI"
+          subTitle="Epiphany119 维护的智能数据分析平台"
           onFinish={async (values) => {
             await handleSubmit(values as API.UserLoginRequest);
           }}

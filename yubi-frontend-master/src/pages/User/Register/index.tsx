@@ -32,7 +32,7 @@ const Register: React.FC = () => {
         <LoginForm
           contentStyle={{ minWidth: 280, maxWidth: '75vw' }}
           logo={<img alt="logo" src="/logo.svg" />}
-          title="鱼智能 BI"
+          title="Epiph-BI"
           subTitle="创建你的数据分析账户"
           onFinish={async (values) => handleSubmit(values as API.UserRegisterRequest)}
           submitter={{ searchConfig: { submitText: '注册' } }}
