@@ -42,7 +42,10 @@ public class AnalysisResultParser {
             JsonNode root = objectMapper.readTree(matcher.group());
             JsonNode chart = root.get("genChart");
             JsonNode result = root.get("genResult");
-            if (chart == null || !chart.isObject() || result == null || !result.isTextual() || result.asText().isBlank()) return null;
+            if (result == null || !result.isTextual() || result.asText().isBlank()) return null;
+            // 新契约只要求模型提供结论；图表由本地统计服务生成。保留旧 JSON 的兼容解析。
+            if (chart == null) return new AnalysisResult(null, result.asText());
+            if (!chart.isObject()) return null;
             String chartJson = objectMapper.writeValueAsString(chart);
             validateChart(chartJson);
             return new AnalysisResult(chartJson, result.asText());

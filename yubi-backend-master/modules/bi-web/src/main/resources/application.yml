@@ -39,8 +39,9 @@ spring:
   # 文件上传
   servlet:
     multipart:
-      # 大小限制
-      max-file-size: 10MB
+      # 与 analysis-biz 的文件限制保持一致，预留 multipart 边界开销。
+      max-file-size: 5MB
+      max-request-size: 6MB
   rabbitmq:
     host: localhost
     port: 5672
