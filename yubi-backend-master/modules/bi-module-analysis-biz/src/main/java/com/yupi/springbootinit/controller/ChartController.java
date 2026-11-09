@@ -12,6 +12,7 @@ import com.yupi.springbootinit.modules.analysis.application.AnalysisTaskCommand;
 import com.yupi.springbootinit.modules.analysis.application.AnalysisTaskResult;
 import com.yupi.springbootinit.service.UserService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.AmqpException;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestPart;
@@ -20,6 +21,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import javax.servlet.http.HttpServletRequest;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 
 /** AI 分析 HTTP 入口；图表 CRUD 由 chart-biz 单独负责。 */
@@ -60,11 +62,16 @@ public class ChartController {
         User loginUser = userService.getLoginUser(request);
         redisLimiterManager.doRateLimit("genChartByAi_" + loginUser.getId());
         Long chartId = analysisTaskApplicationService.createWaitingTask(command(multipartFile, requestBody, loginUser));
-        CompletableFuture.runAsync(() -> analysisTaskApplicationService.executeExistingTask(chartId), threadPoolExecutor)
-                .exceptionally(error -> {
-                    log.error("异步生成图表失败，chartId={}", chartId, error);
-                    return null;
-                });
+        try {
+            CompletableFuture.runAsync(() -> analysisTaskApplicationService.executeExistingTask(chartId), threadPoolExecutor)
+                    .exceptionally(error -> {
+                        log.error("异步生成图表失败，chartId={}", chartId, error);
+                        return null;
+                    });
+        } catch (RejectedExecutionException e) {
+            // 任务已落库；由 WAITING 恢复器在执行器有空位后补偿提交。
+            log.warn("分析线程池繁忙，任务保留 WAITING 并等待恢复扫描，chartId={}", chartId);
+        }
         BiResponse response = new BiResponse();
         response.setChartId(chartId);
         return ResultUtils.success(response);
@@ -77,7 +84,12 @@ public class ChartController {
         User loginUser = userService.getLoginUser(request);
         redisLimiterManager.doRateLimit("genChartByAi_" + loginUser.getId());
         Long chartId = analysisTaskApplicationService.createWaitingTask(command(multipartFile, requestBody, loginUser));
-        biMessageProducer.sendMessage(String.valueOf(chartId));
+        try {
+            biMessageProducer.sendMessage(String.valueOf(chartId));
+        } catch (AmqpException e) {
+            // RabbitMQ 不可用时不丢弃已创建任务；恢复扫描会从数据库重新发现它。
+            log.warn("RabbitMQ 投递失败，任务保留 WAITING 并等待恢复扫描，chartId={}", chartId, e);
+        }
         BiResponse response = new BiResponse();
         response.setChartId(chartId);
         return ResultUtils.success(response);

@@ -4,6 +4,8 @@ import com.yupi.springbootinit.model.entity.Chart;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Param;
 
+import java.util.List;
+
 /**
  * @Entity com.yupi.springbootinit.model.entity.Chart
  */
@@ -17,6 +19,8 @@ public interface ChartMapper extends BaseMapper<Chart> {
 
     int failAnalysis(@Param("chartId") Long chartId,
                      @Param("execMessage") String execMessage);
+
+    List<Long> findWaitingAnalysisTaskIds(@Param("limit") int limit);
 
     int prepareRetry(@Param("chartId") Long chartId, @Param("userId") Long userId);
 

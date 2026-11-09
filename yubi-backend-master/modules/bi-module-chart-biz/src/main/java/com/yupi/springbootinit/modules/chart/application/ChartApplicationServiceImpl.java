@@ -8,6 +8,8 @@ import com.yupi.springbootinit.service.ChartService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 /** 图表任务持久化边界，所有状态迁移均由带旧状态条件的 SQL 原子完成。 */
 @Service
 public class ChartApplicationServiceImpl implements ChartApplicationService {
@@ -67,6 +69,14 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
     public boolean failAnalysis(Long chartId, String execMessage) {
         requireId(chartId);
         return chartMapper.failAnalysis(chartId, sanitize(execMessage)) == 1;
+    }
+
+    @Override
+    public List<Long> findWaitingAnalysisTaskIds(int limit) {
+        if (limit < 1 || limit > 100) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "待执行任务查询数量必须在 1 到 100 之间");
+        }
+        return chartMapper.findWaitingAnalysisTaskIds(limit);
     }
 
     @Override

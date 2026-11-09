@@ -7,3 +7,9 @@ dist/
 *.log
 application-local.yml
 /yubi-backend-master/src/main/resources/application-local.yml
+
+# Epiph-BI local fixtures and private environment settings (keep local, never commit)
+/yubi-backend-master/modules/bi-web/src/main/resources/测试表/
+/yubi-backend-master/modules/bi-web/src/main/resources/application-local.yml
+/yubi-backend-master/modules/bi-web/src/main/resources/application-prod.yml
+/yubi-backend-master/modules/bi-web/src/main/resources/application-test.yml

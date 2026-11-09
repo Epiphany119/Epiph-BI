@@ -14,6 +14,8 @@ import com.yupi.springbootinit.exception.BusinessException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 /** 智能分析唯一业务编排入口；Controller 和 MQ Consumer 都应复用它。 */
 @Service
 public class AnalysisTaskApplicationService {
@@ -51,6 +53,11 @@ public class AnalysisTaskApplicationService {
                                           AnalysisResultParser resultParser) {
         this(chartApplicationService, aiChatClient, dataConverter, promptBuilder, resultParser,
                 new SpreadsheetAnalysisService(new ObjectMapper()));
+    }
+
+    /** 查询一批待执行任务供恢复器补偿；任务执行权由 executeExistingTask 原子领取。 */
+    public List<Long> findWaitingTaskIds(int limit) {
+        return chartApplicationService.findWaitingAnalysisTaskIds(limit);
     }
 
     /** 同步执行：先创建持久化任务，再通过统一的状态领取逻辑执行。 */

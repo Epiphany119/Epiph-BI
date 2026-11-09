@@ -1,11 +1,9 @@
 spring:
   application:
     name: epiph-bi-backend
-  # 默认加载本地环境；隐私配置从 resources/application-local.yml 读取
+  # 默认使用 local profile；application-local.yml 仅在 local profile 激活时自动加载
   profiles:
     active: local
-  config:
-    import: optional:classpath:/application-local.yml
   # 支持 swagger3
   mvc:
     pathmatch:
@@ -20,9 +18,9 @@ spring:
   # todo 需替换配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/yubi
-    username: epiphany
-    password: ${MYSQL_PASSWORD:123456}
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3306/yubi}
+    username: ${MYSQL_USERNAME:epiphany}
+    password: ${MYSQL_PASSWORD}
   # Redis 配置
   # todo 需替换配置，然后取消注释
   redis:
@@ -30,12 +28,6 @@ spring:
     host: localhost
     port: 6379
     timeout: 5000
-  # Elasticsearch 配置
-  # todo 需替换配置，然后取消注释
-#  elasticsearch:
-#    uris: http://localhost:9200
-#    username: root
-#    password: 123456
   # 文件上传
   servlet:
     multipart:
@@ -43,10 +35,10 @@ spring:
       max-file-size: 5MB
       max-request-size: 6MB
   rabbitmq:
-    host: localhost
-    port: 5672
-    password: ${RABBITMQ_PASSWORD:guest}
-    username: guest
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    password: ${RABBITMQ_PASSWORD}
+    username: ${RABBITMQ_USERNAME}
 server:
   address: 0.0.0.0
   port: 8080
@@ -65,14 +57,24 @@ mybatis-plus:
       logic-delete-field: isDelete # 全局逻辑删除的实体字段名
       logic-delete-value: 1 # 逻辑已删除值（默认为 1）
       logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+# 浏览器凭据请求仅允许明确配置的前端 Origin。
+app:
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:8000}
+
+# WAITING 任务由定时恢复器按批补偿。
+analysis:
+  task:
+    recovery-interval-ms: ${ANALYSIS_TASK_RECOVERY_INTERVAL_MS:30000}
+
 # 微信相关
 wx:
   # 微信公众平台
   # todo 需替换配置
   mp:
-    token: xxx
-    aesKey: xxx
-    appId: xxx
+    token: ${WX_MP_TOKEN:}
+    aesKey: ${WX_MP_AES_KEY:}
+    appId: ${WX_MP_APP_ID:}
     secret: ${WX_MP_SECRET:}
     config-storage:
       http-client-type: HttpClient
@@ -84,14 +86,14 @@ wx:
   # 微信开放平台
   # todo 需替换配置
   open:
-    appId: xxx
-    appSecret: xxx
+    appId: ${WX_OPEN_APP_ID:}
+    appSecret: ${WX_OPEN_APP_SECRET:}
 # 对象存储
 # todo 需替换配置
 cos:
   client:
     accessKey: ${COS_ACCESS_KEY:}
     secretKey: ${COS_SECRET_KEY:}
-    region: xxx
-    bucket: xxx
+    region: ${COS_REGION:}
+    bucket: ${COS_BUCKET:}
 # 智谱 AI 配置见 application-local.yml
