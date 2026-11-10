@@ -23,13 +23,14 @@ import java.util.stream.Collectors;
 
 /**
  * 在本地对表格做精确的分组、计数、求和或平均值计算。
- * 仅将有限的统计摘要发送给模型，图表数值由本地聚合结果生成。
+ * 向规划模型发送有限的表格画像和样例；图表数值由本地全量聚合结果生成。
  */
 @Component
 public class SpreadsheetAnalysisService {
     private static final int MAX_CHART_GROUPS = 20;
     private static final int MAX_LABEL_LENGTH = 80;
     private static final String COUNT = "COUNT";
+    private static final String COUNT_DISTINCT = "COUNT_DISTINCT";
     private static final String SUM = "SUM";
     private static final String AVERAGE = "AVERAGE";
 
@@ -43,11 +44,109 @@ public class SpreadsheetAnalysisService {
         this.objectMapper = objectMapper;
     }
 
-    /** 将规范化 CSV 转为可持久化的全量统计快照。 */
+    /** 兼容旧版以原始 CSV 持久化的任务；新任务必须使用模型方案重载。 */
+    @Deprecated
     public AnalysisSummary analyze(String csvData, String goal, String requestedChartType, String chartName) {
         if (csvData == null || csvData.isBlank()) throw new IllegalArgumentException("表格中没有可分析的数据");
         if (goal == null || goal.isBlank()) throw new IllegalArgumentException("分析目标不能为空");
+        ParsedTable table = parseTable(csvData);
+        List<ColumnProfile> profiles = profile(table.headers, table.rows);
+        ColumnProfile dimension = chooseDimension(profiles, goal, table.rows.size());
+        if (dimension == null) {
+            throw new IllegalArgumentException("无法识别可分组字段，请在分析目标中写明要按哪一列表头分类");
+        }
 
+        String aggregation = chooseAggregation(goal);
+        ColumnProfile measure = aggregation.equals(COUNT) ? null : chooseMeasure(profiles, goal);
+        if (!aggregation.equals(COUNT) && measure == null) {
+            throw new IllegalArgumentException("分析目标要求数值统计，但表格中没有可用的数值列；请在目标中注明数值列名");
+        }
+
+        return aggregate(table, dimension, measure, aggregation, resolveChartType(requestedChartType), safeLabel(goal), null);
+    }
+
+    /** 模型先根据目标和表格画像选择字段与口径；服务端校验方案，再对全量行精确计算。 */
+    public AnalysisSummary analyze(String csvData, AnalysisPlan plan, String goal,
+                                   String requestedChartType, String chartName) {
+        if (csvData == null || csvData.isBlank()) throw new IllegalArgumentException("表格中没有可分析的数据");
+        if (goal == null || goal.isBlank()) throw new IllegalArgumentException("分析目标不能为空");
+        if (plan == null) throw new IllegalArgumentException("模型没有返回分析方案");
+
+        ParsedTable table = parseTable(csvData);
+        List<ColumnProfile> profiles = profile(table.headers, table.rows);
+        ColumnProfile dimension = exactColumn(profiles, plan.getDimensionField(), "分组");
+        if (dimension.nonEmpty == 0 || dimension.distinctValues.size() < 2) {
+            throw new IllegalArgumentException("模型选择的分组字段“" + dimension.name + "”没有足够的不同值");
+        }
+
+        String aggregation = COUNT.equals(plan.getAggregation()) ? COUNT : plan.getAggregation();
+        if ("COUNT_ROWS".equals(aggregation)) aggregation = COUNT;
+        if (!List.of(COUNT, COUNT_DISTINCT, SUM, AVERAGE).contains(aggregation)) {
+            throw new IllegalArgumentException("模型返回了不支持的统计方式");
+        }
+        ColumnProfile measure = null;
+        if (!COUNT.equals(aggregation)) {
+            measure = exactColumn(profiles, plan.getMetricField(), "统计");
+            if (measure == dimension) throw new IllegalArgumentException("分组字段和统计字段不能相同");
+            if ((SUM.equals(aggregation) || AVERAGE.equals(aggregation)) && !measure.isMostlyNumeric()) {
+                throw new IllegalArgumentException("模型选择的统计字段“" + measure.name + "”不是可用数值列");
+            }
+        }
+
+        String chartType = requestedChartType == null || requestedChartType.isBlank()
+                ? normalizePlannedChartType(plan.getChartType()) : resolveChartType(requestedChartType);
+        String chartTitle = plan.getChartTitle() == null || plan.getChartTitle().isBlank()
+                ? safeLabel(goal) : safeLabel(plan.getChartTitle());
+        return aggregate(table, dimension, measure, aggregation, chartType, chartTitle, plan.getReason());
+    }
+
+    /** 为模型规划提供完整列画像、示例值和少量代表行；原始全量数据仍用于本地精确聚合。 */
+    public String describeDataset(String csvData) {
+        ParsedTable table = parseTable(csvData);
+        List<ColumnProfile> profiles = profile(table.headers, table.rows);
+        Map<String, Object> description = new LinkedHashMap<>();
+        description.put("rowCount", table.rows.size());
+        List<Map<String, Object>> fields = new ArrayList<>();
+        for (ColumnProfile profile : profiles) {
+            Map<String, Object> field = new LinkedHashMap<>();
+            field.put("name", profile.name);
+            field.put("inferredType", profile.isMostlyNumeric() ? "number" : "text_or_category");
+            field.put("nonEmptyCount", profile.nonEmpty);
+            field.put("distinctCount", profile.distinctValues.size());
+            field.put("examples", profile.exampleValues());
+            fields.add(field);
+        }
+        description.put("fields", fields);
+        List<Map<String, String>> samples = new ArrayList<>();
+        for (List<String> row : representativeRows(table.rows, 8)) {
+            Map<String, String> sample = new LinkedHashMap<>();
+            for (int i = 0; i < table.headers.size(); i++) sample.put(table.headers.get(i), row.get(i));
+            samples.add(sample);
+        }
+        description.put("sampleRows", samples);
+        try {
+            return objectMapper.writeValueAsString(description);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("表格画像序列化失败", e);
+        }
+    }
+
+    private static List<List<String>> representativeRows(List<List<String>> rows, int limit) {
+        return representativeItems(rows, limit);
+    }
+
+    private static <T> List<T> representativeItems(List<T> items, int limit) {
+        int count = Math.min(items.size(), limit);
+        List<T> samples = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            int index = count == 1 ? 0 : (int) ((long) i * (items.size() - 1) / (count - 1));
+            samples.add(items.get(index));
+        }
+        return samples;
+    }
+
+    private ParsedTable parseTable(String csvData) {
+        if (csvData == null || csvData.isBlank()) throw new IllegalArgumentException("表格中没有可分析的数据");
         List<String> headers = new ArrayList<>();
         List<List<String>> rows = new ArrayList<>();
         try (CSVParser parser = CSVFormat.DEFAULT.parse(new StringReader(csvData))) {
@@ -60,13 +159,9 @@ public class SpreadsheetAnalysisService {
             }
             while (iterator.hasNext()) {
                 CSVRecord record = iterator.next();
-                if (record.size() > headers.size()) {
-                    throw new IllegalArgumentException("表格数据列数与表头不一致");
-                }
+                if (record.size() > headers.size()) throw new IllegalArgumentException("表格数据列数与表头不一致");
                 List<String> row = new ArrayList<>(headers.size());
-                for (int i = 0; i < headers.size(); i++) {
-                    row.add(i < record.size() ? record.get(i).trim() : "");
-                }
+                for (int i = 0; i < headers.size(); i++) row.add(i < record.size() ? record.get(i).trim() : "");
                 rows.add(row);
             }
         } catch (IllegalArgumentException e) {
@@ -75,31 +170,36 @@ public class SpreadsheetAnalysisService {
             throw new IllegalArgumentException("表格统计失败", e);
         }
         if (rows.isEmpty()) throw new IllegalArgumentException("表格中没有数据行");
+        return new ParsedTable(headers, rows);
+    }
 
-        List<ColumnProfile> profiles = profile(headers, rows);
-        ColumnProfile dimension = chooseDimension(profiles, goal, rows.size());
-        if (dimension == null) {
-            throw new IllegalArgumentException("无法识别可分组字段，请在分析目标中写明要按哪一列表头分类");
-        }
+    private ColumnProfile exactColumn(List<ColumnProfile> profiles, String name, String kind) {
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("模型没有指定" + kind + "字段");
+        return profiles.stream().filter(profile -> profile.name.equals(name)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("模型选择的" + kind + "字段“" + name + "”不在表格表头中"));
+    }
 
-        String aggregation = chooseAggregation(goal);
-        ColumnProfile measure = aggregation.equals(COUNT) ? null : chooseMeasure(profiles, goal);
-        if (!aggregation.equals(COUNT) && measure == null) {
-            throw new IllegalArgumentException("分析目标要求数值统计，但表格中没有可用的数值列；请在目标中注明数值列名");
-        }
+    private String normalizePlannedChartType(String chartType) {
+        return chartType != null && List.of("bar", "line", "pie", "radar").contains(chartType.toLowerCase(Locale.ROOT))
+                ? chartType.toLowerCase(Locale.ROOT) : "bar";
+    }
 
+    private AnalysisSummary aggregate(ParsedTable table, ColumnProfile dimension, ColumnProfile measure,
+                                      String aggregation, String chartType, String chartTitle, String planReason) {
         Map<String, GroupValue> groups = new HashMap<>();
         int skippedMeasureValues = 0;
-        for (List<String> row : rows) {
+        for (List<String> row : table.rows) {
             String rawLabel = row.get(dimension.index).trim();
             String label = rawLabel.isEmpty() ? "未填写" : rawLabel;
             GroupValue group = groups.computeIfAbsent(label, ignored -> new GroupValue());
             group.rowCount++;
-            if (measure != null) {
+            if (COUNT_DISTINCT.equals(aggregation)) {
+                String value = row.get(measure.index).trim();
+                if (!value.isEmpty()) group.distinctMeasureValues.add(value);
+            } else if (measure != null) {
                 BigDecimal value = parseNumber(row.get(measure.index));
-                if (value == null) {
-                    skippedMeasureValues++;
-                } else {
+                if (value == null) skippedMeasureValues++;
+                else {
                     group.measureSum = group.measureSum.add(value);
                     group.measureCount++;
                 }
@@ -107,28 +207,25 @@ public class SpreadsheetAnalysisService {
         }
 
         List<Map.Entry<String, GroupValue>> sorted = new ArrayList<>(groups.entrySet());
-        // 折线图按类别标签顺序排列（日期采用常见 ISO 格式时也会保持时间顺序）。
-        if (resolveChartType(requestedChartType).equals("line")) {
-            sorted.sort(Map.Entry.comparingByKey());
-        } else {
-            sorted.sort(Comparator.comparing((Map.Entry<String, GroupValue> entry) ->
-                    groupResult(entry.getValue(), aggregation)).reversed());
-        }
+        if (chartType.equals("line")) sorted.sort(Map.Entry.comparingByKey());
+        else sorted.sort(Comparator.comparing((Map.Entry<String, GroupValue> entry) ->
+                groupResult(entry.getValue(), aggregation)).reversed());
         AnalysisSummary summary = new AnalysisSummary();
-        summary.setSourceRowCount(rows.size());
+        summary.setSourceRowCount(table.rows.size());
         summary.setGroupCount(groups.size());
         summary.setDimensionField(dimension.name);
         summary.setMetricField(measure == null ? null : measure.name);
         summary.setAggregation(aggregation);
         summary.setSeriesName(seriesName(aggregation, measure));
-        summary.setChartType(resolveChartType(requestedChartType));
-        // 用户填写的图表名称可能是“demo”等内部命名，图表标题优先说明实际分析目标。
-        summary.setChartTitle(safeLabel(goal));
+        summary.setChartType(chartType);
+        summary.setChartTitle(chartTitle);
+        summary.setPlanReason(planReason);
 
         StringBuilder note = new StringBuilder("图表中的统计值由服务器对全部 ")
-                .append(rows.size()).append(" 条数据记录本地计算，分组字段为“")
+                .append(table.rows.size()).append(" 条数据记录本地计算，分组字段为“")
                 .append(dimension.name).append("”，统计方式为“")
                 .append(aggregationName(aggregation)).append("”。");
+        if (planReason != null && !planReason.isBlank()) note.append("字段与统计口径由模型根据目标和表格画像选择：").append(planReason).append("。");
         boolean lineChart = summary.getChartType().equals("line");
         int visibleCount = Math.min(sorted.size(), lineChart ? MAX_CHART_GROUPS
                 : (sorted.size() > MAX_CHART_GROUPS ? MAX_CHART_GROUPS - 1 : MAX_CHART_GROUPS));
@@ -148,6 +245,7 @@ public class SpreadsheetAnalysisService {
                 other.rowCount += hidden.rowCount;
                 other.measureSum = other.measureSum.add(hidden.measureSum);
                 other.measureCount += hidden.measureCount;
+                other.distinctMeasureValues.addAll(hidden.distinctMeasureValues);
                 hiddenGroups++;
             }
             summary.getLabels().add("其他（" + hiddenGroups + " 类）");
@@ -155,9 +253,7 @@ public class SpreadsheetAnalysisService {
             note.append("类别较多，图表展示前 ").append(visibleCount)
                     .append(" 类，其余类别合并为“其他”，合计仍包含全部数据。");
         }
-        if (skippedMeasureValues > 0) {
-            note.append("有 ").append(skippedMeasureValues).append(" 个空值或非数值单元格未计入数值统计。");
-        }
+        if (skippedMeasureValues > 0) note.append("有 ").append(skippedMeasureValues).append(" 个空值或非数值单元格未计入数值统计。");
         summary.setNote(note.toString());
         return summary;
     }
@@ -256,7 +352,7 @@ public class SpreadsheetAnalysisService {
             // 用户直接写出表头时，优先使用该分类列。例如“销售管理情况”可匹配表头“销售”。
             ColumnProfile explicitHeader = chooseExplicitHeaderDimension(profiles, normalizedGoal, rowCount);
             if (explicitHeader != null) return explicitHeader;
-            throw new IllegalArgumentException("分析目标没有明确分组字段，请写明按城市、平台、类型等哪一列分析");
+            throw new IllegalArgumentException("分析目标没有明确分组字段，请写明按城市、平台、类型等哪一列表头分析");
         }
         ColumnProfile selected = null;
         int selectedScore = Integer.MIN_VALUE;
@@ -366,6 +462,7 @@ public class SpreadsheetAnalysisService {
 
     private BigDecimal groupResult(GroupValue group, String aggregation) {
         if (aggregation.equals(COUNT)) return BigDecimal.valueOf(group.rowCount);
+        if (aggregation.equals(COUNT_DISTINCT)) return BigDecimal.valueOf(group.distinctMeasureValues.size());
         if (aggregation.equals(AVERAGE)) {
             return group.measureCount == 0 ? BigDecimal.ZERO
                     : group.measureSum.divide(BigDecimal.valueOf(group.measureCount), 4, RoundingMode.HALF_UP).stripTrailingZeros();
@@ -375,11 +472,13 @@ public class SpreadsheetAnalysisService {
 
     private String seriesName(String aggregation, ColumnProfile measure) {
         if (aggregation.equals(COUNT)) return "记录数";
+        if (aggregation.equals(COUNT_DISTINCT)) return measure.name + "去重数";
         return measure.name + (aggregation.equals(AVERAGE) ? "平均值" : "合计");
     }
 
     private String aggregationName(String aggregation) {
         if (aggregation.equals(COUNT)) return "按记录数计数";
+        if (aggregation.equals(COUNT_DISTINCT)) return "去重计数";
         if (aggregation.equals(AVERAGE)) return "平均值";
         return "合计";
     }
@@ -448,11 +547,27 @@ public class SpreadsheetAnalysisService {
         private boolean isMostlyNumeric() {
             return nonEmpty > 0 && numericCount >= Math.ceil(nonEmpty * 0.8d);
         }
+
+        private List<String> exampleValues() {
+            List<String> values = new ArrayList<>(distinctValues);
+            return representativeItems(values, 8);
+        }
+    }
+
+    private static final class ParsedTable {
+        private final List<String> headers;
+        private final List<List<String>> rows;
+
+        private ParsedTable(List<String> headers, List<List<String>> rows) {
+            this.headers = headers;
+            this.rows = rows;
+        }
     }
 
     private static final class GroupValue {
         private long rowCount;
         private long measureCount;
         private BigDecimal measureSum = BigDecimal.ZERO;
+        private final Set<String> distinctMeasureValues = new LinkedHashSet<>();
     }
 }

@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.UUID;
 
 /** 智能分析唯一业务编排入口；Controller 和 MQ Consumer 都应复用它。 */
 @Service
@@ -29,6 +30,7 @@ public class AnalysisTaskApplicationService {
     private final SpreadsheetDataConverter dataConverter;
     private final AnalysisPromptBuilder promptBuilder;
     private final AnalysisResultParser resultParser;
+    private final AnalysisPlanParser planParser;
     private final SpreadsheetAnalysisService spreadsheetAnalysisService;
 
     /** Spring 使用共享 ObjectMapper；本地分析服务负责精确聚合和图表构造。 */
@@ -37,12 +39,14 @@ public class AnalysisTaskApplicationService {
                                           SpreadsheetDataConverter dataConverter,
                                           AnalysisPromptBuilder promptBuilder,
                                           AnalysisResultParser resultParser,
+                                          AnalysisPlanParser planParser,
                                           SpreadsheetAnalysisService spreadsheetAnalysisService) {
         this.chartApplicationService = chartApplicationService;
         this.aiChatClient = aiChatClient;
         this.dataConverter = dataConverter;
         this.promptBuilder = promptBuilder;
         this.resultParser = resultParser;
+        this.planParser = planParser;
         this.spreadsheetAnalysisService = spreadsheetAnalysisService;
     }
 
@@ -52,6 +56,7 @@ public class AnalysisTaskApplicationService {
                                           AnalysisPromptBuilder promptBuilder,
                                           AnalysisResultParser resultParser) {
         this(chartApplicationService, aiChatClient, dataConverter, promptBuilder, resultParser,
+                new AnalysisPlanParser(new ObjectMapper()),
                 new SpreadsheetAnalysisService(new ObjectMapper()));
     }
 
@@ -65,16 +70,23 @@ public class AnalysisTaskApplicationService {
         return executeExistingTask(createWaitingTask(command));
     }
 
-    /** 只创建 WAITING 任务，不调用模型；异步线程池和 MQ 入口使用该方法。 */
+    /** 模型先选择字段与统计口径；本地精确统计后保存快照，再创建 WAITING 任务供解释阶段执行。 */
     public Long createWaitingTask(AnalysisTaskCommand command) {
         AnalysisSummary summary;
         try {
             validate(command);
             String csvData = dataConverter.convert(command.getFile());
+            AiChatRequest planningRequest = new AiChatRequest();
+            planningRequest.setSystemPrompt(promptBuilder.buildPlanningSystemPrompt());
+            planningRequest.setUserMessage(promptBuilder.buildPlanningUserMessage(command.getGoal(),
+                    command.getChartType(), spreadsheetAnalysisService.describeDataset(csvData)));
+            planningRequest.setTraceId("analysis-plan-" + UUID.randomUUID());
+            AiChatResponse planningResponse = aiChatClient.chat(planningRequest);
+            AnalysisPlan plan = planParser.parse(planningResponse.getContent());
             summary = spreadsheetAnalysisService.analyze(
-                    csvData, command.getGoal(), command.getChartType(), command.getName());
+                    csvData, plan, command.getGoal(), command.getChartType(), command.getName());
         } catch (IllegalArgumentException e) {
-            // 文件限制和字段识别错误需反馈给用户，避免被全局异常处理器隐藏成“系统错误”。
+            // 文件限制、模型澄清和无效字段方案需反馈给用户，避免被全局异常处理器隐藏成“系统错误”。
             throw new BusinessException(ErrorCode.PARAMS_ERROR, e.getMessage());
         }
         return chartApplicationService.createAnalysisTask(new CreateAnalysisChartCommand(

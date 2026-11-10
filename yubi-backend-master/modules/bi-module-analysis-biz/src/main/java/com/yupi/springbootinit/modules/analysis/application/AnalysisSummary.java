@@ -19,6 +19,7 @@ public class AnalysisSummary {
     private String chartType;
     private String chartTitle;
     private String note;
+    private String planReason;
     private List<String> labels = new ArrayList<>();
     private List<BigDecimal> values = new ArrayList<>();
 
@@ -45,6 +46,8 @@ public class AnalysisSummary {
     public void setChartTitle(String chartTitle) { this.chartTitle = chartTitle; }
     public String getNote() { return note; }
     public void setNote(String note) { this.note = note; }
+    public String getPlanReason() { return planReason; }
+    public void setPlanReason(String planReason) { this.planReason = planReason; }
     public List<String> getLabels() { return labels; }
     public void setLabels(List<String> labels) { this.labels = labels; }
     public List<BigDecimal> getValues() { return values; }
