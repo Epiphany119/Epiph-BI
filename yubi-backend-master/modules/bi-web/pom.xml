@@ -16,4 +16,12 @@
         <dependency><groupId>com.yupi</groupId><artifactId>bi-module-dashboard-biz</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.yupi</groupId><artifactId>bi-module-report-biz</artifactId><version>${project.version}</version></dependency>
     </dependencies>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
 </project>
