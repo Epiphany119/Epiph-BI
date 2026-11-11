@@ -13,6 +13,7 @@ public class AnalysisSummary {
     private int sourceRowCount;
     private int groupCount;
     private String dimensionField;
+    private String seriesField;
     private String metricField;
     private String aggregation;
     private String seriesName;
@@ -22,6 +23,7 @@ public class AnalysisSummary {
     private String planReason;
     private List<String> labels = new ArrayList<>();
     private List<BigDecimal> values = new ArrayList<>();
+    private List<AnalysisSeries> chartSeries = new ArrayList<>();
 
     public AnalysisSummary() {
     }
@@ -34,6 +36,8 @@ public class AnalysisSummary {
     public void setGroupCount(int groupCount) { this.groupCount = groupCount; }
     public String getDimensionField() { return dimensionField; }
     public void setDimensionField(String dimensionField) { this.dimensionField = dimensionField; }
+    public String getSeriesField() { return seriesField; }
+    public void setSeriesField(String seriesField) { this.seriesField = seriesField; }
     public String getMetricField() { return metricField; }
     public void setMetricField(String metricField) { this.metricField = metricField; }
     public String getAggregation() { return aggregation; }
@@ -52,4 +56,6 @@ public class AnalysisSummary {
     public void setLabels(List<String> labels) { this.labels = labels; }
     public List<BigDecimal> getValues() { return values; }
     public void setValues(List<BigDecimal> values) { this.values = values; }
+    public List<AnalysisSeries> getChartSeries() { return chartSeries; }
+    public void setChartSeries(List<AnalysisSeries> chartSeries) { this.chartSeries = chartSeries; }
 }

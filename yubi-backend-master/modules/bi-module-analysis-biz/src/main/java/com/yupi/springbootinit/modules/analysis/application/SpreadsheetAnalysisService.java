@@ -28,6 +28,7 @@ import java.util.stream.Collectors;
 @Component
 public class SpreadsheetAnalysisService {
     private static final int MAX_CHART_GROUPS = 20;
+    private static final int MAX_STACKED_SERIES = 8;
     private static final int MAX_LABEL_LENGTH = 80;
     private static final String COUNT = "COUNT";
     private static final String COUNT_DISTINCT = "COUNT_DISTINCT";
@@ -62,7 +63,8 @@ public class SpreadsheetAnalysisService {
             throw new IllegalArgumentException("分析目标要求数值统计，但表格中没有可用的数值列；请在目标中注明数值列名");
         }
 
-        return aggregate(table, dimension, measure, aggregation, resolveChartType(requestedChartType), safeLabel(goal), null);
+        return aggregate(table, dimension, null, measure, aggregation,
+                resolveChartType(requestedChartType), safeLabel(goal), null);
     }
 
     /** 模型先根据目标和表格画像选择字段与口径；服务端校验方案，再对全量行精确计算。 */
@@ -95,9 +97,23 @@ public class SpreadsheetAnalysisService {
 
         String chartType = requestedChartType == null || requestedChartType.isBlank()
                 ? normalizePlannedChartType(plan.getChartType()) : resolveChartType(requestedChartType);
+        ColumnProfile seriesDimension = null;
+        if ("stacked".equals(chartType)) {
+            if (!COUNT.equals(aggregation) && !SUM.equals(aggregation)) {
+                throw new IllegalArgumentException("堆叠图只支持数量或合计统计，请改用记录数或求和指标");
+            }
+            seriesDimension = exactColumn(profiles, plan.getSeriesField(), "堆叠系列");
+            if (seriesDimension == dimension || seriesDimension == measure) {
+                throw new IllegalArgumentException("堆叠系列字段必须与横轴分组字段和统计字段不同");
+            }
+            if (seriesDimension.nonEmpty == 0 || seriesDimension.distinctValues.size() < 2) {
+                throw new IllegalArgumentException("堆叠系列字段需要至少两个不同类别");
+            }
+        }
         String chartTitle = plan.getChartTitle() == null || plan.getChartTitle().isBlank()
                 ? safeLabel(goal) : safeLabel(plan.getChartTitle());
-        return aggregate(table, dimension, measure, aggregation, chartType, chartTitle, plan.getReason());
+        return aggregate(table, dimension, seriesDimension, measure, aggregation,
+                chartType, chartTitle, plan.getReason());
     }
 
     /** 为模型规划提供完整列画像、示例值和少量代表行；原始全量数据仍用于本地精确聚合。 */
@@ -180,12 +196,19 @@ public class SpreadsheetAnalysisService {
     }
 
     private String normalizePlannedChartType(String chartType) {
-        return chartType != null && List.of("bar", "line", "pie", "radar").contains(chartType.toLowerCase(Locale.ROOT))
+        return chartType != null && List.of("bar", "line", "pie", "radar", "stacked").contains(chartType.toLowerCase(Locale.ROOT))
                 ? chartType.toLowerCase(Locale.ROOT) : "bar";
     }
 
-    private AnalysisSummary aggregate(ParsedTable table, ColumnProfile dimension, ColumnProfile measure,
+    private AnalysisSummary aggregate(ParsedTable table, ColumnProfile dimension, ColumnProfile seriesDimension,
+                                      ColumnProfile measure,
                                       String aggregation, String chartType, String chartTitle, String planReason) {
+        if ("stacked".equals(chartType)) {
+            if (seriesDimension == null) {
+                throw new IllegalArgumentException("堆叠图需要第二个分类字段作为系列；请重新提交分析并明确拆分字段");
+            }
+            return aggregateStacked(table, dimension, seriesDimension, measure, aggregation, chartTitle, planReason);
+        }
         Map<String, GroupValue> groups = new HashMap<>();
         int skippedMeasureValues = 0;
         for (List<String> row : table.rows) {
@@ -258,12 +281,137 @@ public class SpreadsheetAnalysisService {
         return summary;
     }
 
+    /** 对“横轴类别 × 堆叠系列”矩阵做全量本地汇总，缺失组合补零。 */
+    private AnalysisSummary aggregateStacked(ParsedTable table, ColumnProfile dimension,
+                                             ColumnProfile seriesDimension, ColumnProfile measure,
+                                             String aggregation, String chartTitle, String planReason) {
+        Map<String, Map<String, GroupValue>> matrix = new HashMap<>();
+        Map<String, GroupValue> dimensionTotals = new HashMap<>();
+        Map<String, GroupValue> seriesTotals = new HashMap<>();
+        int skippedMeasureValues = 0;
+
+        for (List<String> row : table.rows) {
+            String dimensionLabel = normalizedLabel(row.get(dimension.index));
+            String seriesLabel = normalizedLabel(row.get(seriesDimension.index));
+            BigDecimal measureValue = SUM.equals(aggregation) ? parseNumber(row.get(measure.index)) : null;
+            if (SUM.equals(aggregation) && measureValue == null) skippedMeasureValues++;
+
+            GroupValue cell = matrix.computeIfAbsent(dimensionLabel, ignored -> new HashMap<>())
+                    .computeIfAbsent(seriesLabel, ignored -> new GroupValue());
+            addStackedValue(cell, aggregation, measureValue);
+            addStackedValue(dimensionTotals.computeIfAbsent(dimensionLabel, ignored -> new GroupValue()), aggregation, measureValue);
+            addStackedValue(seriesTotals.computeIfAbsent(seriesLabel, ignored -> new GroupValue()), aggregation, measureValue);
+        }
+
+        List<String> orderedDimensions = dimensionTotals.entrySet().stream()
+                .sorted(Comparator.comparing((Map.Entry<String, GroupValue> entry) -> groupResult(entry.getValue(), aggregation)).reversed())
+                .map(Map.Entry::getKey).collect(Collectors.toList());
+        List<String> orderedSeries = seriesTotals.entrySet().stream()
+                .sorted(Comparator.comparing((Map.Entry<String, GroupValue> entry) -> groupResult(entry.getValue(), aggregation)).reversed())
+                .map(Map.Entry::getKey).collect(Collectors.toList());
+        List<LabelBucket> dimensionBuckets = labelBuckets(orderedDimensions, MAX_CHART_GROUPS, "类");
+        List<LabelBucket> seriesBuckets = labelBuckets(orderedSeries, MAX_STACKED_SERIES, "组");
+
+        AnalysisSummary summary = new AnalysisSummary();
+        summary.setSourceRowCount(table.rows.size());
+        summary.setGroupCount(dimensionTotals.size());
+        summary.setDimensionField(dimension.name);
+        summary.setSeriesField(seriesDimension.name);
+        summary.setMetricField(measure == null ? null : measure.name);
+        summary.setAggregation(aggregation);
+        summary.setSeriesName(seriesName(aggregation, measure));
+        summary.setChartType("stacked");
+        summary.setChartTitle(chartTitle);
+        summary.setPlanReason(planReason);
+
+        for (LabelBucket dimensionBucket : dimensionBuckets) {
+            summary.getLabels().add(safeLabel(dimensionBucket.label));
+            GroupValue total = new GroupValue();
+            for (String dimensionKey : dimensionBucket.keys) {
+                mergeGroupValue(total, dimensionTotals.get(dimensionKey));
+            }
+            summary.getValues().add(groupResult(total, aggregation));
+        }
+
+        for (LabelBucket seriesBucket : seriesBuckets) {
+            AnalysisSeries chartSeries = new AnalysisSeries();
+            chartSeries.setName(safeLabel(seriesBucket.label));
+            for (LabelBucket dimensionBucket : dimensionBuckets) {
+                GroupValue total = new GroupValue();
+                for (String dimensionKey : dimensionBucket.keys) {
+                    Map<String, GroupValue> cells = matrix.getOrDefault(dimensionKey, Map.of());
+                    for (String seriesKey : seriesBucket.keys) mergeGroupValue(total, cells.get(seriesKey));
+                }
+                chartSeries.getValues().add(groupResult(total, aggregation));
+            }
+            summary.getChartSeries().add(chartSeries);
+        }
+
+        StringBuilder note = new StringBuilder("图表中的统计值由服务器对全部 ")
+                .append(table.rows.size()).append(" 条数据记录本地计算；横轴按“")
+                .append(dimension.name).append("”分组，堆叠系列按“")
+                .append(seriesDimension.name).append("”拆分，统计方式为“")
+                .append(aggregationName(aggregation)).append("”。");
+        if (planReason != null && !planReason.isBlank()) note.append("字段与统计口径由模型根据目标和表格画像选择：").append(planReason).append("。");
+        if (dimensionBuckets.size() < dimensionTotals.size()) {
+            note.append("横轴类别超过图表上限，其余类别已合并为“")
+                    .append(dimensionBuckets.get(dimensionBuckets.size() - 1).label).append("”。");
+        }
+        if (seriesBuckets.size() < seriesTotals.size()) {
+            note.append("系列类别超过图表上限，其余类别已合并为“")
+                    .append(seriesBuckets.get(seriesBuckets.size() - 1).label).append("”。");
+        }
+        if (skippedMeasureValues > 0) note.append("有 ").append(skippedMeasureValues).append(" 个空值或非数值单元格未计入合计。");
+        summary.setNote(note.toString());
+        return summary;
+    }
+
+    private void addStackedValue(GroupValue group, String aggregation, BigDecimal measureValue) {
+        group.rowCount++;
+        if (SUM.equals(aggregation) && measureValue != null) {
+            group.measureSum = group.measureSum.add(measureValue);
+            group.measureCount++;
+        }
+    }
+
+    private void mergeGroupValue(GroupValue target, GroupValue source) {
+        if (source == null) return;
+        target.rowCount += source.rowCount;
+        target.measureCount += source.measureCount;
+        target.measureSum = target.measureSum.add(source.measureSum);
+    }
+
+    private List<LabelBucket> labelBuckets(List<String> orderedKeys, int maximum, String otherUnit) {
+        List<LabelBucket> buckets = new ArrayList<>();
+        if (orderedKeys.size() <= maximum) {
+            for (String key : orderedKeys) buckets.add(new LabelBucket(key, List.of(key)));
+            return buckets;
+        }
+        int visibleCount = maximum - 1;
+        for (int i = 0; i < visibleCount; i++) {
+            String key = orderedKeys.get(i);
+            buckets.add(new LabelBucket(key, List.of(key)));
+        }
+        List<String> hiddenKeys = new ArrayList<>(orderedKeys.subList(visibleCount, orderedKeys.size()));
+        buckets.add(new LabelBucket("其他（" + hiddenKeys.size() + otherUnit + "）", hiddenKeys));
+        return buckets;
+    }
+
+    private String normalizedLabel(String rawLabel) {
+        String label = rawLabel == null ? "" : rawLabel.trim();
+        return label.isEmpty() ? "未填写" : label;
+    }
+
     /** 任务重试优先复用统计快照，并兼容已经落库的旧版原始 CSV。 */
     public AnalysisSummary restore(String chartData, String goal, String chartType, String chartName) {
         if (chartData == null || chartData.isBlank()) throw new IllegalArgumentException("任务缺少数据摘要");
         try {
             AnalysisSummary summary = objectMapper.readValue(chartData, AnalysisSummary.class);
-            if (summary.getSchemaVersion() == 1 && summary.getLabels() != null
+            boolean validStackedSeries = !"stacked".equals(summary.getChartType())
+                    || summary.getChartSeries() != null && !summary.getChartSeries().isEmpty()
+                    && summary.getChartSeries().stream().allMatch(series -> series.getValues() != null
+                    && series.getValues().size() == summary.getLabels().size());
+            if (summary.getSchemaVersion() == 1 && validStackedSeries && summary.getLabels() != null
                     && summary.getValues() != null && summary.getLabels().size() == summary.getValues().size()
                     && !summary.getLabels().isEmpty()) {
                 return summary;
@@ -315,6 +463,27 @@ public class SpreadsheetAnalysisService {
             option.put("radar", Map.of("indicator", indicators));
             series.add(Map.of("name", summary.getSeriesName(), "type", "radar",
                     "data", List.of(Map.of("name", summary.getSeriesName(), "value", summary.getValues()))));
+        } else if (type.equals("stacked")) {
+            if (summary.getChartSeries() == null || summary.getChartSeries().isEmpty()) {
+                throw new IllegalArgumentException("堆叠图缺少系列统计结果");
+            }
+            option.put("legend", Map.of("type", "scroll"));
+            option.put("tooltip", Map.of("trigger", "axis", "axisPointer", Map.of("type", "shadow")));
+            option.put("grid", Map.of("containLabel", true));
+            option.put("xAxis", Map.of("type", "category", "data", summary.getLabels()));
+            option.put("yAxis", Map.of("type", "value", "name", summary.getSeriesName()));
+            for (AnalysisSeries chartSeries : summary.getChartSeries()) {
+                if (chartSeries.getValues() == null || chartSeries.getValues().size() != summary.getLabels().size()) {
+                    throw new IllegalArgumentException("堆叠图系列数据与横轴类别不匹配");
+                }
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("name", chartSeries.getName());
+                item.put("type", "bar");
+                item.put("stack", "total");
+                item.put("emphasis", Map.of("focus", "series"));
+                item.put("data", chartSeries.getValues());
+                series.add(item);
+            }
         } else {
             option.put("grid", Map.of("containLabel", true));
             option.put("xAxis", Map.of("type", "category", "data", summary.getLabels()));
@@ -485,6 +654,7 @@ public class SpreadsheetAnalysisService {
 
     private String resolveChartType(String requested) {
         if (requested == null) return "bar";
+        if (requested.contains("堆叠")) return "stacked";
         if (requested.contains("饼")) return "pie";
         if (requested.contains("雷达")) return "radar";
         if (requested.contains("折线")) return "line";
@@ -561,6 +731,16 @@ public class SpreadsheetAnalysisService {
         private ParsedTable(List<String> headers, List<List<String>> rows) {
             this.headers = headers;
             this.rows = rows;
+        }
+    }
+
+    private static final class LabelBucket {
+        private final String label;
+        private final List<String> keys;
+
+        private LabelBucket(String label, List<String> keys) {
+            this.label = label;
+            this.keys = keys;
         }
     }
 

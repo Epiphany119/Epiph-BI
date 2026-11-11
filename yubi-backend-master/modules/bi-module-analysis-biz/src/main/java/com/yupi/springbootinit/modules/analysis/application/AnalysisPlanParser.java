@@ -39,18 +39,23 @@ public class AnalysisPlanParser {
 
             AnalysisPlan plan = new AnalysisPlan();
             plan.setDimensionField(text(root, "dimensionField", ""));
+            String seriesField = text(root, "seriesField", "");
+            plan.setSeriesField("null".equalsIgnoreCase(seriesField) ? "" : seriesField);
             String metricField = text(root, "metricField", "");
             plan.setMetricField("null".equalsIgnoreCase(metricField) ? "" : metricField);
             plan.setAggregation(text(root, "aggregation", "").toUpperCase(Locale.ROOT));
-            plan.setChartType(text(root, "chartType", "bar").toLowerCase(Locale.ROOT));
+            plan.setChartType(normalizeChartType(text(root, "chartType", "bar")));
             plan.setChartTitle(text(root, "chartTitle", ""));
             plan.setReason(text(root, "reason", ""));
             if (plan.getDimensionField().isBlank()) throw new IllegalArgumentException("模型没有指定分组字段");
             if (!plan.getAggregation().matches("COUNT_ROWS|COUNT_DISTINCT|SUM|AVERAGE")) {
                 throw new IllegalArgumentException("模型选择了不支持的统计方式");
             }
-            if (!plan.getChartType().matches("bar|line|pie|radar")) {
+            if (!plan.getChartType().matches("bar|line|pie|radar|stacked")) {
                 throw new IllegalArgumentException("模型选择了不支持的图表类型");
+            }
+            if ("stacked".equals(plan.getChartType()) && plan.getSeriesField().isBlank()) {
+                throw new IllegalArgumentException("模型没有指定堆叠系列字段");
             }
             return plan;
         } catch (IllegalArgumentException e) {
@@ -63,5 +68,15 @@ public class AnalysisPlanParser {
     private String text(JsonNode root, String key, String fallback) {
         JsonNode value = root.get(key);
         return value == null || value.isNull() ? fallback : value.asText(fallback).trim();
+    }
+
+    private String normalizeChartType(String chartType) {
+        String normalized = chartType == null ? "bar" : chartType.trim().toLowerCase(Locale.ROOT);
+        if (normalized.contains("堆叠")) return "stacked";
+        if (normalized.contains("折线")) return "line";
+        if (normalized.contains("饼")) return "pie";
+        if (normalized.contains("雷达")) return "radar";
+        if (normalized.contains("柱")) return "bar";
+        return normalized;
     }
 }
