@@ -200,6 +200,14 @@ export async function listMyChartByPageUsingPOST(
   });
 }
 
+/** getMyUsageSummary GET /api/chart/usage/summary */
+export async function getMyUsageSummaryUsingGET(options?: { [key: string]: any }) {
+  return request<API.BaseResponseAiUsageSummaryVO_>('/api/chart/usage/summary', {
+    method: 'GET',
+    ...(options || {}),
+  });
+}
+
 /** updateChart POST /api/chart/update */
 export async function updateChartUsingPOST(
   body: API.ChartUpdateRequest,

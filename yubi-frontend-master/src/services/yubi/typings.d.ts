@@ -88,6 +88,31 @@ declare namespace API {
     message?: string;
   };
 
+  type AiUsageDailyTrendVO = {
+    calls?: number;
+    date?: string;
+    estimatedCostCny?: number;
+    totalTokens?: number;
+  };
+
+  type AiUsageSummaryVO = {
+    avgLatencyMs?: number;
+    dailyTrend?: AiUsageDailyTrendVO[];
+    fallbackCalls?: number;
+    successCalls?: number;
+    totalCalls?: number;
+    totalEstimatedCostCny?: number;
+    totalInputTokens?: number;
+    totalOutputTokens?: number;
+    totalTokens?: number;
+  };
+
+  type BaseResponseAiUsageSummaryVO_ = {
+    code?: number;
+    data?: AiUsageSummaryVO;
+    message?: string;
+  };
+
   type BiResponse = {
     chartId?: number;
     genChart?: string;
@@ -95,17 +120,21 @@ declare namespace API {
   };
 
   type Chart = {
+    actualModel?: string;
     chartData?: string;
     chartType?: string;
     createTime?: string;
+    estimatedCostCny?: number;
     execMessage?: string;
     genChart?: string;
     genResult?: string;
     goal?: string;
     id?: number;
     isDelete?: number;
+    latencyMs?: number;
     name?: string;
     status?: string;
+    totalTokens?: number;
     updateTime?: string;
     userId?: number;
   };

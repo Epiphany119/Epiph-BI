@@ -37,6 +37,12 @@ public interface ChartMapper extends BaseMapper<Chart> {
 
     int prepareRetry(@Param("chartId") Long chartId, @Param("userId") Long userId);
 
+    int accumulateUsage(@Param("chartId") Long chartId,
+                        @Param("actualModel") String actualModel,
+                        @Param("totalTokens") int totalTokens,
+                        @Param("estimatedCostCny") java.math.BigDecimal estimatedCostCny,
+                        @Param("latencyMs") long latencyMs);
+
     int deleteIfNotRunning(@Param("chartId") Long chartId);
 }
 

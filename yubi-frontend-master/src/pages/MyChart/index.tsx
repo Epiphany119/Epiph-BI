@@ -380,6 +380,19 @@ const MyChart: React.FC = () => {
               <Tag color={statusMeta[normalizeStatus(selectedChart.status)].color}>
                 {statusMeta[normalizeStatus(selectedChart.status)].label}
               </Tag>
+              {selectedChart.actualModel && <Tag color="blue">{selectedChart.actualModel}</Tag>}
+              {selectedChart.totalTokens !== undefined && selectedChart.totalTokens !== null && (
+                <Tag color="geekblue">
+                  {selectedChart.totalTokens.toLocaleString('zh-CN')} Tokens
+                </Tag>
+              )}
+              {selectedChart.latencyMs !== undefined && selectedChart.latencyMs !== null && (
+                <Tag color="cyan">
+                  {selectedChart.latencyMs >= 1000
+                    ? `${(selectedChart.latencyMs / 1000).toFixed(2)}s`
+                    : `${selectedChart.latencyMs}ms`}
+                </Tag>
+              )}
               <Text type="secondary">
                 {selectedChart.chartType || '图表类型未记录'} ·{' '}
                 {formatDate(selectedChart.createTime)}

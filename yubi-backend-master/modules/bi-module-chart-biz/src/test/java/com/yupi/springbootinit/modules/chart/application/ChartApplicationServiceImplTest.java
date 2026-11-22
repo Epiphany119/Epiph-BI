@@ -151,6 +151,54 @@ class ChartApplicationServiceImplTest {
         verify(chartMapper).failAnalysis(106L, "worker-1", "Authorization=[REDACTED]");
     }
 
+    /** 记录 AI 调用成功用量时应同时写入 ai_usage_log 并累加到 chart 汇总列。 */
+    @Test
+    void shouldRecordAiUsageAndAccumulateChartMetrics() {
+        ChartMapper chartMapper = mock(ChartMapper.class);
+        com.yupi.springbootinit.mapper.AiUsageLogMapper usageLogMapper =
+                mock(com.yupi.springbootinit.mapper.AiUsageLogMapper.class);
+        ChartApplicationServiceImpl service = new ChartApplicationServiceImpl(
+                mock(ChartService.class), chartMapper, usageLogMapper);
+
+        service.recordAiUsage(new RecordAiUsageCommand(
+                12L, 301L, "EXPLAINING", "glm-4-plus", "glm-4-flash",
+                true, 3, true, null, 800, 200, 1000,
+                new java.math.BigDecimal("0.000100"), 1450L));
+
+        verify(usageLogMapper).insert(argThat(log ->
+                Long.valueOf(12L).equals(log.getUserId())
+                        && Long.valueOf(301L).equals(log.getChartId())
+                        && "glm-4-flash".equals(log.getActualModel())
+                        && Integer.valueOf(1).equals(log.getFallbackUsed())
+                        && Integer.valueOf(1000).equals(log.getTotalTokens())));
+        verify(chartMapper).accumulateUsage(301L, "glm-4-flash", 1000,
+                new java.math.BigDecimal("0.000100"), 1450L);
+    }
+
+    /** 查询用户用量汇总时应组装总指标与近 7 天每日趋势。 */
+    @Test
+    void shouldReturnUserUsageSummaryWithDailyTrend() {
+        com.yupi.springbootinit.mapper.AiUsageLogMapper usageLogMapper =
+                mock(com.yupi.springbootinit.mapper.AiUsageLogMapper.class);
+        com.yupi.springbootinit.model.vo.AiUsageSummaryVO summary = new com.yupi.springbootinit.model.vo.AiUsageSummaryVO();
+        summary.setTotalCalls(5L);
+        summary.setFallbackCalls(1L);
+        summary.setTotalTokens(4200L);
+        com.yupi.springbootinit.model.vo.AiUsageDailyTrendVO day = new com.yupi.springbootinit.model.vo.AiUsageDailyTrendVO();
+        day.setDate("2026-11-22");
+        day.setCalls(2L);
+        when(usageLogMapper.selectUserUsageSummary(12L)).thenReturn(summary);
+        when(usageLogMapper.selectUserDailyTrend(12L, 7)).thenReturn(List.of(day));
+
+        ChartApplicationServiceImpl service = new ChartApplicationServiceImpl(
+                mock(ChartService.class), mock(ChartMapper.class), usageLogMapper);
+        com.yupi.springbootinit.model.vo.AiUsageSummaryVO result = service.getUserUsageSummary(12L);
+
+        assertEquals(5L, result.getTotalCalls());
+        assertEquals(1L, result.getFallbackCalls());
+        assertEquals(1, result.getDailyTrend().size());
+    }
+
     private Chart chart(Long id, Long userId, String status) {
         Chart chart = new Chart();
         chart.setId(id);

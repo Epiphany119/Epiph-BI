@@ -18,6 +18,10 @@
             <result property="maxAttempts" column="maxAttempts" jdbcType="INTEGER"/>
             <result property="leaseExpireTime" column="leaseExpireTime" jdbcType="TIMESTAMP"/>
             <result property="workerId" column="workerId" jdbcType="VARCHAR"/>
+            <result property="actualModel" column="actualModel" jdbcType="VARCHAR"/>
+            <result property="totalTokens" column="totalTokens" jdbcType="INTEGER"/>
+            <result property="estimatedCostCny" column="estimatedCostCny" jdbcType="DECIMAL"/>
+            <result property="latencyMs" column="latencyMs" jdbcType="BIGINT"/>
             <result property="userId" column="userId" jdbcType="BIGINT"/>
             <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
             <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
@@ -28,6 +32,7 @@
         id,`name`,goal,chartData,
         chartType,genChart,genResult,status,execMessage,
         attemptCount,maxAttempts,leaseExpireTime,workerId,
+        actualModel,totalTokens,estimatedCostCny,latencyMs,
         userId,createTime,updateTime,isDelete
     </sql>
 
@@ -144,6 +149,18 @@
           AND userId = #{userId}
           AND isDelete = 0
           AND UPPER(status) = 'FAILED'
+    </update>
+
+    <!-- 累加单次 AI 调用的 Token、估算费用与耗时到图表汇总指标。 -->
+    <update id="accumulateUsage">
+        UPDATE chart
+        SET actualModel = COALESCE(#{actualModel}, actualModel),
+            totalTokens = COALESCE(totalTokens, 0) + #{totalTokens},
+            estimatedCostCny = COALESCE(estimatedCostCny, 0) + #{estimatedCostCny},
+            latencyMs = COALESCE(latencyMs, 0) + #{latencyMs},
+            updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND isDelete = 0
     </update>
 
     <!-- 条件逻辑删除，避免任务在检查后刚好被领取时仍被删除。 -->

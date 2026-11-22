@@ -2,13 +2,20 @@ package com.yupi.springbootinit.modules.chart.application;
 
 import com.yupi.springbootinit.common.ErrorCode;
 import com.yupi.springbootinit.exception.BusinessException;
+import com.yupi.springbootinit.mapper.AiUsageLogMapper;
 import com.yupi.springbootinit.mapper.ChartMapper;
+import com.yupi.springbootinit.model.entity.AiUsageLog;
 import com.yupi.springbootinit.model.entity.Chart;
+import com.yupi.springbootinit.model.vo.AiUsageDailyTrendVO;
+import com.yupi.springbootinit.model.vo.AiUsageSummaryVO;
 import com.yupi.springbootinit.service.ChartService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /** 图表任务持久化边界，所有状态迁移均由带旧状态与租约条件的 SQL 原子完成。 */
@@ -19,15 +26,26 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
     public static final String SUCCEEDED = "SUCCEEDED";
     public static final String FAILED = "FAILED";
     public static final int DEFAULT_MAX_ATTEMPTS = 3;
+    public static final int DEFAULT_TREND_DAYS = 7;
     public static final String EXPIRED_MAX_ATTEMPTS_MESSAGE =
             "任务执行超时且已达最大自动重试次数，请检查数据后手动重试";
 
     private final ChartService chartService;
     private final ChartMapper chartMapper;
+    private final AiUsageLogMapper aiUsageLogMapper;
 
-    public ChartApplicationServiceImpl(ChartService chartService, ChartMapper chartMapper) {
+    @Autowired
+    public ChartApplicationServiceImpl(ChartService chartService,
+                                       ChartMapper chartMapper,
+                                       AiUsageLogMapper aiUsageLogMapper) {
         this.chartService = chartService;
         this.chartMapper = chartMapper;
+        this.aiUsageLogMapper = aiUsageLogMapper;
+    }
+
+    /** 兼容既有双参单元测试构造入口。 */
+    public ChartApplicationServiceImpl(ChartService chartService, ChartMapper chartMapper) {
+        this(chartService, chartMapper, null);
     }
 
     @Override
@@ -137,6 +155,62 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "任务状态已变化，请刷新后重试");
         }
         return getAnalysisContext(chartId);
+    }
+
+    @Override
+    @Transactional
+    public void recordAiUsage(RecordAiUsageCommand command) {
+        if (command == null || command.getUserId() == null) {
+            return;
+        }
+        BigDecimal cost = command.getEstimatedCostCny() == null ? BigDecimal.ZERO : command.getEstimatedCostCny();
+        if (aiUsageLogMapper != null) {
+            AiUsageLog log = new AiUsageLog();
+            log.setUserId(command.getUserId());
+            log.setChartId(command.getChartId());
+            log.setStage(command.getStage() == null || command.getStage().isBlank() ? "UNKNOWN" : command.getStage());
+            log.setRequestedModel(defaultModelName(command.getRequestedModel()));
+            log.setActualModel(defaultModelName(command.getActualModel()));
+            log.setFallbackUsed(command.isFallbackUsed() ? 1 : 0);
+            log.setAttemptCount(Math.max(1, command.getAttemptCount()));
+            log.setSuccess(command.isSuccess() ? 1 : 0);
+            log.setErrorCode(command.getErrorCode());
+            log.setInputTokens(Math.max(0, command.getInputTokens()));
+            log.setOutputTokens(Math.max(0, command.getOutputTokens()));
+            log.setTotalTokens(Math.max(0, command.getTotalTokens()));
+            log.setEstimatedCostCny(cost);
+            log.setLatencyMs(Math.max(0L, command.getLatencyMs()));
+            aiUsageLogMapper.insert(log);
+        }
+        if (command.getChartId() != null && command.getChartId() > 0 && command.isSuccess()) {
+            chartMapper.accumulateUsage(
+                    command.getChartId(),
+                    command.getActualModel(),
+                    Math.max(0, command.getTotalTokens()),
+                    cost,
+                    Math.max(0L, command.getLatencyMs()));
+        }
+    }
+
+    @Override
+    public AiUsageSummaryVO getUserUsageSummary(Long userId) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户不能为空");
+        }
+        if (aiUsageLogMapper == null) {
+            return new AiUsageSummaryVO();
+        }
+        AiUsageSummaryVO summary = aiUsageLogMapper.selectUserUsageSummary(userId);
+        if (summary == null) {
+            summary = new AiUsageSummaryVO();
+        }
+        List<AiUsageDailyTrendVO> trend = aiUsageLogMapper.selectUserDailyTrend(userId, DEFAULT_TREND_DAYS);
+        summary.setDailyTrend(trend == null ? Collections.emptyList() : trend);
+        return summary;
+    }
+
+    private String defaultModelName(String model) {
+        return model == null || model.isBlank() ? "unknown" : model.trim();
     }
 
     private Chart getChart(Long chartId) {

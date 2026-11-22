@@ -1,4 +1,7 @@
-import { listMyChartByPageUsingPOST } from '@/services/yubi/chartController';
+import {
+  getMyUsageSummaryUsingGET,
+  listMyChartByPageUsingPOST,
+} from '@/services/yubi/chartController';
 import {
   ArrowRightOutlined,
   BarChartOutlined,
@@ -8,6 +11,7 @@ import {
   FileSearchOutlined,
   PlusOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { history } from '@umijs/max';
@@ -56,22 +60,43 @@ const formatDate = (value?: string) => {
   return value.replace('T', ' ').slice(0, 16);
 };
 
+const formatTokens = (tokens?: number) => {
+  if (!tokens || tokens <= 0) return '0';
+  if (tokens >= 10000) return `${(tokens / 1000).toFixed(1)}k`;
+  return tokens.toLocaleString('zh-CN');
+};
+
+const formatCost = (cost?: number) => {
+  if (cost === undefined || cost === null) return '¥0.0000';
+  return `¥${Number(cost).toFixed(4)}`;
+};
+
+const formatLatency = (ms?: number) => {
+  if (!ms || ms <= 0) return '0 ms';
+  return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms} ms`;
+};
+
 const Dashboard: React.FC = () => {
   const [charts, setCharts] = useState<API.Chart[]>([]);
   const [total, setTotal] = useState(0);
+  const [usageSummary, setUsageSummary] = useState<API.AiUsageSummaryVO>();
   const [loading, setLoading] = useState(true);
 
   const loadCharts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await listMyChartByPageUsingPOST({
-        current: 1,
-        pageSize: RECENT_PAGE_SIZE,
-        sortField: 'createTime',
-        sortOrder: 'desc',
-      });
-      setCharts(res.data?.records ?? []);
-      setTotal(res.data?.total ?? res.data?.records?.length ?? 0);
+      const [chartRes, usageRes] = await Promise.all([
+        listMyChartByPageUsingPOST({
+          current: 1,
+          pageSize: RECENT_PAGE_SIZE,
+          sortField: 'createTime',
+          sortOrder: 'desc',
+        }),
+        getMyUsageSummaryUsingGET().catch(() => undefined),
+      ]);
+      setCharts(chartRes.data?.records ?? []);
+      setTotal(chartRes.data?.total ?? chartRes.data?.records?.length ?? 0);
+      setUsageSummary(usageRes?.data);
     } catch (error: any) {
       message.error(error?.response?.data?.message || error?.message || '分析记录加载失败');
     } finally {
@@ -86,6 +111,10 @@ const Dashboard: React.FC = () => {
   const completed = charts.filter((item) => normalizeStatus(item.status) === 'succeeded').length;
   const processing = charts.filter((item) => normalizeStatus(item.status) === 'processing').length;
   const failed = charts.filter((item) => normalizeStatus(item.status) === 'failed').length;
+  const successRate =
+    usageSummary?.totalCalls && usageSummary.totalCalls > 0
+      ? `${Math.round(((usageSummary.successCalls ?? 0) / usageSummary.totalCalls) * 100)}%`
+      : '—';
 
   const openCharts = () => history.push('/my_chart');
 
@@ -146,6 +175,53 @@ const Dashboard: React.FC = () => {
           </Card>
         </Col>
       </Row>
+
+      <Card className="dashboard-panel dashboard-finops-panel" bordered={false}>
+        <div className="dashboard-section-heading dashboard-section-heading--compact">
+          <div>
+            <Title level={4}>
+              <SafetyCertificateOutlined style={{ marginRight: 8, color: '#2f98a2' }} />
+              AI 成本与弹性观测
+            </Title>
+            <Text type="secondary">
+              统计两阶段模型调用的 Token 消耗、估算费用、响应耗时与备用模型降级保障
+            </Text>
+          </div>
+        </div>
+        <Row gutter={[14, 14]}>
+          <Col xs={12} md={6}>
+            <div className="dashboard-finops-stat">
+              <span className="dashboard-finops-stat__label">累计消耗 Token</span>
+              <strong>{loading ? '—' : formatTokens(usageSummary?.totalTokens)}</strong>
+              <small>
+                输入 {formatTokens(usageSummary?.totalInputTokens)} / 输出{' '}
+                {formatTokens(usageSummary?.totalOutputTokens)}
+              </small>
+            </div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div className="dashboard-finops-stat">
+              <span className="dashboard-finops-stat__label">估算累计费用</span>
+              <strong>{loading ? '—' : formatCost(usageSummary?.totalEstimatedCostCny)}</strong>
+              <small>累计调用 {usageSummary?.totalCalls ?? 0} 次</small>
+            </div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div className="dashboard-finops-stat">
+              <span className="dashboard-finops-stat__label">平均响应耗时</span>
+              <strong>{loading ? '—' : formatLatency(usageSummary?.avgLatencyMs)}</strong>
+              <small>调用成功率 {successRate}</small>
+            </div>
+          </Col>
+          <Col xs={12} md={6}>
+            <div className="dashboard-finops-stat">
+              <span className="dashboard-finops-stat__label">模型降级保障</span>
+              <strong>{loading ? '—' : usageSummary?.fallbackCalls ?? 0}</strong>
+              <small>主模型受限时自动切换备用模型</small>
+            </div>
+          </Col>
+        </Row>
+      </Card>
 
       <Row gutter={[18, 18]} className="dashboard-content">
         <Col xs={24} xl={16}>

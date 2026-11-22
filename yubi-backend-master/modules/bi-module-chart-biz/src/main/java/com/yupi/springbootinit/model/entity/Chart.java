@@ -80,6 +80,26 @@ public class Chart implements Serializable {
     private String workerId;
 
     /**
+     * 实际执行的 AI 模型
+     */
+    private String actualModel;
+
+    /**
+     * 累计消耗 Token 数
+     */
+    private Integer totalTokens;
+
+    /**
+     * 累计估算费用（人民币元）
+     */
+    private java.math.BigDecimal estimatedCostCny;
+
+    /**
+     * 累计 AI 调用耗时（毫秒）
+     */
+    private Long latencyMs;
+
+    /**
      * 用户 id
      */
     private Long userId;

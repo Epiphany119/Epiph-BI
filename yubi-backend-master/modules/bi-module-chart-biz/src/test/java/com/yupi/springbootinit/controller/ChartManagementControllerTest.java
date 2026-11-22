@@ -173,6 +173,28 @@ class ChartManagementControllerTest {
         verify(chartMapper).deleteIfNotRunning(24L);
     }
 
+    /** 用量汇总接口仅查询当前登录用户的 AI 用量统计。 */
+    @Test
+    void shouldReturnUsageSummaryForAuthenticatedUser() {
+        UserService userService = mock(UserService.class);
+        when(userService.getLoginUser(any())).thenReturn(user(33L, "user"));
+        com.yupi.springbootinit.modules.chart.application.ChartApplicationService appService =
+                mock(com.yupi.springbootinit.modules.chart.application.ChartApplicationService.class);
+        com.yupi.springbootinit.model.vo.AiUsageSummaryVO summary = new com.yupi.springbootinit.model.vo.AiUsageSummaryVO();
+        summary.setTotalCalls(4L);
+        summary.setTotalTokens(3200L);
+        when(appService.getUserUsageSummary(33L)).thenReturn(summary);
+        ChartManagementController controller = new ChartManagementController(
+                mock(ChartService.class), mock(ChartMapper.class), userService, appService);
+
+        com.yupi.springbootinit.model.vo.AiUsageSummaryVO data =
+                controller.getMyUsageSummary(new MockHttpServletRequest()).getData();
+
+        assertEquals(4L, data.getTotalCalls());
+        assertEquals(3200L, data.getTotalTokens());
+        verify(appService).getUserUsageSummary(33L);
+    }
+
     private User user(Long id, String role) {
         User user = new User();
         user.setId(id);

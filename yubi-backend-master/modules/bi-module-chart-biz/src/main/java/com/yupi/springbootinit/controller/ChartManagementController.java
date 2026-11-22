@@ -15,9 +15,12 @@ import com.yupi.springbootinit.model.dto.chart.ChartQueryRequest;
 import com.yupi.springbootinit.model.dto.chart.ChartUpdateRequest;
 import com.yupi.springbootinit.model.entity.Chart;
 import com.yupi.springbootinit.model.entity.User;
+import com.yupi.springbootinit.model.vo.AiUsageSummaryVO;
+import com.yupi.springbootinit.modules.chart.application.ChartApplicationService;
 import com.yupi.springbootinit.service.ChartService;
 import com.yupi.springbootinit.service.UserService;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -37,13 +40,24 @@ public class ChartManagementController {
     private final ChartService chartService;
     private final ChartMapper chartMapper;
     private final UserService userService;
+    private final ChartApplicationService chartApplicationService;
 
+    @Autowired
     public ChartManagementController(ChartService chartService,
-                                    ChartMapper chartMapper,
-                                    UserService userService) {
+                                     ChartMapper chartMapper,
+                                     UserService userService,
+                                     ChartApplicationService chartApplicationService) {
         this.chartService = chartService;
         this.chartMapper = chartMapper;
         this.userService = userService;
+        this.chartApplicationService = chartApplicationService;
+    }
+
+    /** 兼容既有三参单元测试构造入口。 */
+    public ChartManagementController(ChartService chartService,
+                                     ChartMapper chartMapper,
+                                     UserService userService) {
+        this(chartService, chartMapper, userService, null);
     }
 
     /** 手动创建图表；归属用户始终取自服务端登录态。 */
@@ -126,6 +140,16 @@ public class ChartManagementController {
         }
         User loginUser = userService.getLoginUser(request);
         return ResultUtils.success(queryPage(requestBody, loginUser.getId()));
+    }
+
+    /** 查询当前用户的 AI 调用用量、估算费用、模型降级次数与近 7 天趋势。 */
+    @GetMapping("/usage/summary")
+    public BaseResponse<AiUsageSummaryVO> getMyUsageSummary(HttpServletRequest request) {
+        User loginUser = userService.getLoginUser(request);
+        if (chartApplicationService == null) {
+            return ResultUtils.success(new AiUsageSummaryVO());
+        }
+        return ResultUtils.success(chartApplicationService.getUserUsageSummary(loginUser.getId()));
     }
 
     /** 编辑请求即使携带 chartData/结果/状态等字段，也只会更新用户可编辑字段。 */

@@ -1,5 +1,7 @@
 package com.yupi.springbootinit.modules.chart.application;
 
+import com.yupi.springbootinit.model.vo.AiUsageSummaryVO;
+
 import java.util.List;
 
 /**
@@ -23,4 +25,10 @@ public interface ChartApplicationService {
     ReclaimResult reclaimExpiredRunningTasks(int limit);
 
     AnalysisChartContext prepareRetry(Long chartId, Long userId);
+
+    /** 记录单次 AI 调用用量日志，并在关联 chartId 时累加到图表汇总指标。 */
+    void recordAiUsage(RecordAiUsageCommand command);
+
+    /** 查询指定用户的 AI 调用用量、估算费用、降级次数与近 7 天趋势。 */
+    AiUsageSummaryVO getUserUsageSummary(Long userId);
 }
