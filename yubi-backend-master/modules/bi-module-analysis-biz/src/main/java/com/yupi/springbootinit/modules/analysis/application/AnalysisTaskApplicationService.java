@@ -4,18 +4,21 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yupi.springbootinit.airuntime.api.AiChatClient;
 import com.yupi.springbootinit.airuntime.api.AiChatRequest;
 import com.yupi.springbootinit.airuntime.api.AiChatResponse;
+import com.yupi.springbootinit.common.ErrorCode;
+import com.yupi.springbootinit.exception.BusinessException;
 import com.yupi.springbootinit.modules.analysis.converter.SpreadsheetDataConverter;
 import com.yupi.springbootinit.modules.analysis.prompt.AnalysisPromptBuilder;
 import com.yupi.springbootinit.modules.chart.application.AnalysisChartContext;
 import com.yupi.springbootinit.modules.chart.application.ChartApplicationService;
 import com.yupi.springbootinit.modules.chart.application.CreateAnalysisChartCommand;
-import com.yupi.springbootinit.common.ErrorCode;
-import com.yupi.springbootinit.exception.BusinessException;
+import com.yupi.springbootinit.modules.chart.application.ReclaimResult;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 /** 智能分析唯一业务编排入口；Controller 和 MQ Consumer 都应复用它。 */
 @Service
@@ -24,6 +27,7 @@ public class AnalysisTaskApplicationService {
     public static final String RUNNING = "RUNNING";
     public static final String SUCCEEDED = "SUCCEEDED";
     public static final String FAILED = "FAILED";
+    public static final int DEFAULT_LEASE_SECONDS = 120;
 
     private final ChartApplicationService chartApplicationService;
     private final AiChatClient aiChatClient;
@@ -32,6 +36,8 @@ public class AnalysisTaskApplicationService {
     private final AnalysisResultParser resultParser;
     private final AnalysisPlanParser planParser;
     private final SpreadsheetAnalysisService spreadsheetAnalysisService;
+    private final int leaseSeconds;
+    private final Supplier<String> workerIdGenerator;
 
     /** Spring 使用共享 ObjectMapper；本地分析服务负责精确聚合和图表构造。 */
     @Autowired
@@ -40,7 +46,34 @@ public class AnalysisTaskApplicationService {
                                           AnalysisPromptBuilder promptBuilder,
                                           AnalysisResultParser resultParser,
                                           AnalysisPlanParser planParser,
-                                          SpreadsheetAnalysisService spreadsheetAnalysisService) {
+                                          SpreadsheetAnalysisService spreadsheetAnalysisService,
+                                          @Value("${analysis.task.lease-seconds:120}") int leaseSeconds) {
+        this(chartApplicationService, aiChatClient, dataConverter, promptBuilder, resultParser,
+                planParser, spreadsheetAnalysisService, leaseSeconds,
+                AnalysisTaskApplicationService::defaultWorkerId);
+    }
+
+    /** 保留轻量手工构造入口，便于现有模块内调用方平滑迁移与单元测试注入。 */
+    public AnalysisTaskApplicationService(ChartApplicationService chartApplicationService, AiChatClient aiChatClient,
+                                          SpreadsheetDataConverter dataConverter,
+                                          AnalysisPromptBuilder promptBuilder,
+                                          AnalysisResultParser resultParser) {
+        this(chartApplicationService, aiChatClient, dataConverter, promptBuilder, resultParser,
+                new AnalysisPlanParser(new ObjectMapper()),
+                new SpreadsheetAnalysisService(new ObjectMapper()),
+                DEFAULT_LEASE_SECONDS,
+                AnalysisTaskApplicationService::defaultWorkerId);
+    }
+
+    /** 支持测试注入确定性 workerId 和租约时长。 */
+    AnalysisTaskApplicationService(ChartApplicationService chartApplicationService, AiChatClient aiChatClient,
+                                   SpreadsheetDataConverter dataConverter,
+                                   AnalysisPromptBuilder promptBuilder,
+                                   AnalysisResultParser resultParser,
+                                   AnalysisPlanParser planParser,
+                                   SpreadsheetAnalysisService spreadsheetAnalysisService,
+                                   int leaseSeconds,
+                                   Supplier<String> workerIdGenerator) {
         this.chartApplicationService = chartApplicationService;
         this.aiChatClient = aiChatClient;
         this.dataConverter = dataConverter;
@@ -48,21 +81,20 @@ public class AnalysisTaskApplicationService {
         this.resultParser = resultParser;
         this.planParser = planParser;
         this.spreadsheetAnalysisService = spreadsheetAnalysisService;
-    }
-
-    /** 保留轻量手工构造入口，便于现有模块内调用方平滑迁移。 */
-    public AnalysisTaskApplicationService(ChartApplicationService chartApplicationService, AiChatClient aiChatClient,
-                                          SpreadsheetDataConverter dataConverter,
-                                          AnalysisPromptBuilder promptBuilder,
-                                          AnalysisResultParser resultParser) {
-        this(chartApplicationService, aiChatClient, dataConverter, promptBuilder, resultParser,
-                new AnalysisPlanParser(new ObjectMapper()),
-                new SpreadsheetAnalysisService(new ObjectMapper()));
+        this.leaseSeconds = leaseSeconds > 0 ? leaseSeconds : DEFAULT_LEASE_SECONDS;
+        this.workerIdGenerator = workerIdGenerator != null
+                ? workerIdGenerator
+                : AnalysisTaskApplicationService::defaultWorkerId;
     }
 
     /** 查询一批待执行任务供恢复器补偿；任务执行权由 executeExistingTask 原子领取。 */
     public List<Long> findWaitingTaskIds(int limit) {
         return chartApplicationService.findWaitingAnalysisTaskIds(limit);
+    }
+
+    /** 回收租约已过期的 RUNNING 任务：未达上限回退 WAITING，达上限原子置为 FAILED。 */
+    public ReclaimResult reclaimExpiredRunningTasks(int limit) {
+        return chartApplicationService.reclaimExpiredRunningTasks(limit);
     }
 
     /** 同步执行：先创建持久化任务，再通过统一的状态领取逻辑执行。 */
@@ -95,13 +127,15 @@ public class AnalysisTaskApplicationService {
     }
 
     /**
-     * 执行已持久化任务。原子领取失败说明该消息已被处理或仍有执行者，不再调用模型。
+     * 执行已持久化任务。每次尝试生成独立 workerId 作为 Fencing Token，
+     * 原子领取失败说明该任务已被处理、仍在运行或已耗尽重试额度，不再调用模型。
      */
     public AnalysisTaskResult executeExistingTask(Long chartId) {
         if (chartId == null || chartId <= 0) {
             throw new IllegalArgumentException("分析任务 ID 无效");
         }
-        boolean acquired = chartApplicationService.tryStartAnalysis(chartId);
+        String workerId = workerIdGenerator.get();
+        boolean acquired = chartApplicationService.tryStartAnalysis(chartId, workerId, leaseSeconds);
         AnalysisChartContext context = chartApplicationService.getAnalysisContext(chartId);
         if (!acquired) {
             if (SUCCEEDED.equalsIgnoreCase(context.getStatus()) || RUNNING.equalsIgnoreCase(context.getStatus())) {
@@ -109,16 +143,16 @@ public class AnalysisTaskApplicationService {
             }
             throw new IllegalStateException("当前任务状态不可执行: " + context.getStatus());
         }
-        return callAiAndPersist(context);
+        return callAiAndPersist(context, workerId);
     }
 
-    /** 失败重试由图表模块原子校验所属用户和 FAILED 状态，再沿同一执行路径领取。 */
+    /** 失败重试由图表模块原子校验所属用户和 FAILED 状态并重置自动尝试计数，再沿同一执行路径领取。 */
     public AnalysisTaskResult retryFailedTask(Long chartId, Long userId) {
         chartApplicationService.prepareRetry(chartId, userId);
         return executeExistingTask(chartId);
     }
 
-    private AnalysisTaskResult callAiAndPersist(AnalysisChartContext context) {
+    private AnalysisTaskResult callAiAndPersist(AnalysisChartContext context, String workerId) {
         Long chartId = context.getChartId();
         try {
             AnalysisSummary summary = spreadsheetAnalysisService.restore(context.getChartData(), context.getGoal(),
@@ -133,15 +167,19 @@ public class AnalysisTaskApplicationService {
             AnalysisResult result = resultParser.parse(response.getContent());
             // 图表数值只取本地全量统计，不采信模型编造或误读的图表模板。
             String genChart = spreadsheetAnalysisService.buildChartOption(summary);
-            if (!chartApplicationService.completeAnalysis(chartId, genChart, result.getGenResult())) {
-                throw new IllegalStateException("分析结果保存失败，任务状态已变化");
+            if (!chartApplicationService.completeAnalysis(chartId, workerId, genChart, result.getGenResult())) {
+                throw new IllegalStateException("分析结果保存失败，任务租约已失效或状态已变化");
             }
             return new AnalysisTaskResult(chartId, genChart, result.getGenResult());
         } catch (RuntimeException e) {
-            // 独立的短事务将失败状态落库，避免 AI 调用异常被长事务回滚。
-            chartApplicationService.failAnalysis(chartId, e.getMessage());
+            // 仅在仍持有当前 workerId 租约时落库 FAILED，避免超时回收后旧执行者覆盖新结果。
+            chartApplicationService.failAnalysis(chartId, workerId, e.getMessage());
             throw e;
         }
+    }
+
+    private static String defaultWorkerId() {
+        return "worker-" + UUID.randomUUID().toString().replace("-", "").substring(0, 12);
     }
 
     private AnalysisTaskResult resultFrom(AnalysisChartContext context) {

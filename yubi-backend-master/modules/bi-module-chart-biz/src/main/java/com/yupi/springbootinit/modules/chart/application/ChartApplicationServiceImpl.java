@@ -8,15 +8,19 @@ import com.yupi.springbootinit.service.ChartService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
-/** 图表任务持久化边界，所有状态迁移均由带旧状态条件的 SQL 原子完成。 */
+/** 图表任务持久化边界，所有状态迁移均由带旧状态与租约条件的 SQL 原子完成。 */
 @Service
 public class ChartApplicationServiceImpl implements ChartApplicationService {
     public static final String WAITING = "WAITING";
     public static final String RUNNING = "RUNNING";
     public static final String SUCCEEDED = "SUCCEEDED";
     public static final String FAILED = "FAILED";
+    public static final int DEFAULT_MAX_ATTEMPTS = 3;
+    public static final String EXPIRED_MAX_ATTEMPTS_MESSAGE =
+            "任务执行超时且已达最大自动重试次数，请检查数据后手动重试";
 
     private final ChartService chartService;
     private final ChartMapper chartMapper;
@@ -39,6 +43,8 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
         chart.setChartData(command.getChartData());
         chart.setUserId(command.getUserId());
         chart.setStatus(WAITING);
+        chart.setAttemptCount(0);
+        chart.setMaxAttempts(DEFAULT_MAX_ATTEMPTS);
         if (!chartService.save(chart)) {
             throw new BusinessException(ErrorCode.OPERATION_ERROR, "分析任务创建失败");
         }
@@ -52,23 +58,29 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
 
     @Override
     @Transactional
-    public boolean tryStartAnalysis(Long chartId) {
+    public boolean tryStartAnalysis(Long chartId, String workerId, int leaseSeconds) {
         requireId(chartId);
-        return chartMapper.tryStartAnalysis(chartId) == 1;
+        requireWorkerId(workerId);
+        if (leaseSeconds <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "任务租约时长必须大于 0");
+        }
+        return chartMapper.tryStartAnalysis(chartId, workerId.trim(), leaseSeconds) == 1;
     }
 
     @Override
     @Transactional
-    public boolean completeAnalysis(Long chartId, String genChart, String genResult) {
+    public boolean completeAnalysis(Long chartId, String workerId, String genChart, String genResult) {
         requireId(chartId);
-        return chartMapper.completeAnalysis(chartId, genChart, genResult) == 1;
+        requireWorkerId(workerId);
+        return chartMapper.completeAnalysis(chartId, workerId.trim(), genChart, genResult) == 1;
     }
 
     @Override
     @Transactional
-    public boolean failAnalysis(Long chartId, String execMessage) {
+    public boolean failAnalysis(Long chartId, String workerId, String execMessage) {
         requireId(chartId);
-        return chartMapper.failAnalysis(chartId, sanitize(execMessage)) == 1;
+        requireWorkerId(workerId);
+        return chartMapper.failAnalysis(chartId, workerId.trim(), sanitize(execMessage)) == 1;
     }
 
     @Override
@@ -77,6 +89,34 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "待执行任务查询数量必须在 1 到 100 之间");
         }
         return chartMapper.findWaitingAnalysisTaskIds(limit);
+    }
+
+    @Override
+    public ReclaimResult reclaimExpiredRunningTasks(int limit) {
+        if (limit < 1 || limit > 100) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "超时任务回收数量必须在 1 到 100 之间");
+        }
+        List<Chart> expiredTasks = chartMapper.findExpiredRunningTasks(limit);
+        List<Long> requeuedIds = new ArrayList<>();
+        List<Long> failedIds = new ArrayList<>();
+        if (expiredTasks == null || expiredTasks.isEmpty()) {
+            return new ReclaimResult(requeuedIds, failedIds);
+        }
+        for (Chart task : expiredTasks) {
+            int attempts = task.getAttemptCount() == null ? 0 : task.getAttemptCount();
+            int maxAttempts = task.getMaxAttempts() == null ? DEFAULT_MAX_ATTEMPTS : task.getMaxAttempts();
+            if (attempts < maxAttempts) {
+                if (chartMapper.requeueExpiredRunningTask(task.getId(), task.getWorkerId()) == 1) {
+                    requeuedIds.add(task.getId());
+                }
+            } else {
+                if (chartMapper.failExpiredRunningTask(task.getId(), task.getWorkerId(),
+                        EXPIRED_MAX_ATTEMPTS_MESSAGE) == 1) {
+                    failedIds.add(task.getId());
+                }
+            }
+        }
+        return new ReclaimResult(requeuedIds, failedIds);
     }
 
     @Override
@@ -111,6 +151,12 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
     private void requireId(Long chartId) {
         if (chartId == null || chartId <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+    }
+
+    private void requireWorkerId(String workerId) {
+        if (workerId == null || workerId.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "执行节点标识不能为空");
         }
     }
 

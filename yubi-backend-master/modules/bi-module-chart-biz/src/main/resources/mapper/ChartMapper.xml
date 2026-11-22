@@ -14,6 +14,10 @@
             <result property="genResult" column="genResult" jdbcType="VARCHAR"/>
             <result property="status" column="status" jdbcType="VARCHAR"/>
             <result property="execMessage" column="execMessage" jdbcType="VARCHAR"/>
+            <result property="attemptCount" column="attemptCount" jdbcType="INTEGER"/>
+            <result property="maxAttempts" column="maxAttempts" jdbcType="INTEGER"/>
+            <result property="leaseExpireTime" column="leaseExpireTime" jdbcType="TIMESTAMP"/>
+            <result property="workerId" column="workerId" jdbcType="VARCHAR"/>
             <result property="userId" column="userId" jdbcType="BIGINT"/>
             <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
             <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
@@ -22,58 +26,119 @@
 
     <sql id="Base_Column_List">
         id,`name`,goal,chartData,
-        chartType,genChart,genResult,status,execMessage,userId,
-        createTime,updateTime,isDelete
+        chartType,genChart,genResult,status,execMessage,
+        attemptCount,maxAttempts,leaseExpireTime,workerId,
+        userId,createTime,updateTime,isDelete
     </sql>
 
-    <!-- 只有成功领取 WAITING 任务的消费者可以调用模型；兼容历史 wait 状态。 -->
+    <!-- 只有成功领取 WAITING 任务且未超过最大尝试次数的执行者可以调用模型；兼容历史 wait 状态。 -->
     <update id="tryStartAnalysis">
         UPDATE chart
-        SET status = 'RUNNING', updateTime = CURRENT_TIMESTAMP
+        SET status = 'RUNNING',
+            workerId = #{workerId},
+            leaseExpireTime = DATE_ADD(CURRENT_TIMESTAMP, INTERVAL #{leaseSeconds} SECOND),
+            attemptCount = COALESCE(attemptCount, 0) + 1,
+            updateTime = CURRENT_TIMESTAMP
         WHERE id = #{chartId}
           AND isDelete = 0
           AND UPPER(status) IN ('WAITING', 'WAIT')
+          AND COALESCE(attemptCount, 0) &lt; COALESCE(maxAttempts, 3)
     </update>
 
-    <!-- 结果只允许由仍处于 RUNNING 的任务写入，防止过期执行覆盖新状态。 -->
+    <!-- 结果只允许由仍持有租约的 RUNNING 执行者写入，防止超时回收后旧节点覆盖新状态。 -->
     <update id="completeAnalysis">
         UPDATE chart
         SET genChart = #{genChart},
             genResult = #{genResult},
             execMessage = NULL,
             status = 'SUCCEEDED',
+            workerId = NULL,
+            leaseExpireTime = NULL,
             updateTime = CURRENT_TIMESTAMP
         WHERE id = #{chartId}
           AND isDelete = 0
           AND UPPER(status) = 'RUNNING'
+          AND workerId = #{workerId}
     </update>
 
-    <!-- 错误信息已在应用层脱敏，这里仍限定只更新当前运行任务。 -->
+    <!-- 错误信息已在应用层脱敏，这里仍限定只由当前租约持有者更新运行任务。 -->
     <update id="failAnalysis">
         UPDATE chart
         SET execMessage = #{execMessage},
             status = 'FAILED',
+            workerId = NULL,
+            leaseExpireTime = NULL,
             updateTime = CURRENT_TIMESTAMP
         WHERE id = #{chartId}
           AND isDelete = 0
           AND UPPER(status) = 'RUNNING'
+          AND workerId = #{workerId}
     </update>
 
-    <!-- 只扫描有限数量的待执行任务；最终执行权仍由 tryStartAnalysis 原子领取。 -->
+    <!-- 只扫描有限数量且仍有剩余尝试额度的待执行任务；最终执行权仍由 tryStartAnalysis 原子领取。 -->
     <select id="findWaitingAnalysisTaskIds" resultType="java.lang.Long">
         SELECT id
         FROM chart
         WHERE isDelete = 0
           AND UPPER(status) IN ('WAITING', 'WAIT')
+          AND COALESCE(attemptCount, 0) &lt; COALESCE(maxAttempts, 3)
         ORDER BY createTime ASC, id ASC
         LIMIT #{limit}
     </select>
 
-    <!-- 重试同时校验归属与失败状态，防止并发重试或跨用户调用。 -->
+    <!-- 查找租约已过期的 RUNNING 任务，供恢复器按 attemptCount 决定重新入队或终止为 FAILED。 -->
+    <select id="findExpiredRunningTasks" resultMap="BaseResultMap">
+        SELECT id, attemptCount, maxAttempts, workerId
+        FROM chart
+        WHERE isDelete = 0
+          AND UPPER(status) = 'RUNNING'
+          AND leaseExpireTime IS NOT NULL
+          AND leaseExpireTime &lt; CURRENT_TIMESTAMP
+        ORDER BY leaseExpireTime ASC, id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 未达最大尝试次数的超时 RUNNING 任务原子回退到 WAITING，清空租约等待重新领取。 -->
+    <update id="requeueExpiredRunningTask">
+        UPDATE chart
+        SET status = 'WAITING',
+            workerId = NULL,
+            leaseExpireTime = NULL,
+            updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND isDelete = 0
+          AND UPPER(status) = 'RUNNING'
+          AND leaseExpireTime IS NOT NULL
+          AND leaseExpireTime &lt; CURRENT_TIMESTAMP
+          AND COALESCE(attemptCount, 0) &lt; COALESCE(maxAttempts, 3)
+          AND (workerId = #{expectedWorkerId} OR (#{expectedWorkerId} IS NULL AND workerId IS NULL))
+    </update>
+
+    <!-- 已达最大尝试次数的超时 RUNNING 任务原子终止为 FAILED，避免无限重跑消耗 Token。 -->
+    <update id="failExpiredRunningTask">
+        UPDATE chart
+        SET status = 'FAILED',
+            workerId = NULL,
+            leaseExpireTime = NULL,
+            execMessage = #{execMessage},
+            updateTime = CURRENT_TIMESTAMP
+        WHERE id = #{chartId}
+          AND isDelete = 0
+          AND UPPER(status) = 'RUNNING'
+          AND leaseExpireTime IS NOT NULL
+          AND leaseExpireTime &lt; CURRENT_TIMESTAMP
+          AND COALESCE(attemptCount, 0) &gt;= COALESCE(maxAttempts, 3)
+          AND (workerId = #{expectedWorkerId} OR (#{expectedWorkerId} IS NULL AND workerId IS NULL))
+    </update>
+
+    <!-- 手动重试同时校验归属与失败状态，重置自动尝试次数与租约字段。 -->
     <update id="prepareRetry">
         UPDATE chart
         SET status = 'WAITING',
             execMessage = NULL,
+            attemptCount = 0,
+            workerId = NULL,
+            leaseExpireTime = NULL,
             updateTime = CURRENT_TIMESTAMP
         WHERE id = #{chartId}
           AND userId = #{userId}

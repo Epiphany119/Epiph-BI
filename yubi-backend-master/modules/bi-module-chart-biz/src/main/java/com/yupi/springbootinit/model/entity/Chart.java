@@ -60,6 +60,26 @@ public class Chart implements Serializable {
     private String execMessage;
 
     /**
+     * 已尝试执行次数
+     */
+    private Integer attemptCount;
+
+    /**
+     * 最大自动尝试次数
+     */
+    private Integer maxAttempts;
+
+    /**
+     * RUNNING 租约过期时间
+     */
+    private Date leaseExpireTime;
+
+    /**
+     * 当前持有租约的执行节点标识
+     */
+    private String workerId;
+
+    /**
      * 用户 id
      */
     private Long userId;
