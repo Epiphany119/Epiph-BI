@@ -1,5 +1,8 @@
 package com.yupi.springbootinit.modules.analysis.application;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /** 由配置的 AI 模型根据分析目标和表格画像生成，并由服务端校验后执行的分析方案。 */
 public class AnalysisPlan {
     private String dimensionField;
@@ -9,6 +12,7 @@ public class AnalysisPlan {
     private String chartType;
     private String chartTitle;
     private String reason;
+    private List<FilterCondition> filters = new ArrayList<>();
 
     public String getDimensionField() { return dimensionField; }
     public void setDimensionField(String dimensionField) { this.dimensionField = dimensionField; }
@@ -24,4 +28,8 @@ public class AnalysisPlan {
     public void setChartTitle(String chartTitle) { this.chartTitle = chartTitle; }
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }
+    public List<FilterCondition> getFilters() { return filters; }
+    public void setFilters(List<FilterCondition> filters) {
+        this.filters = filters == null ? new ArrayList<>() : new ArrayList<>(filters);
+    }
 }

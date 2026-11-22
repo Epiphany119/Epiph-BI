@@ -11,6 +11,7 @@ import java.util.List;
 public class AnalysisSummary {
     private int schemaVersion = 1;
     private int sourceRowCount;
+    private Integer filteredRowCount;
     private int groupCount;
     private String dimensionField;
     private String seriesField;
@@ -21,6 +22,7 @@ public class AnalysisSummary {
     private String chartTitle;
     private String note;
     private String planReason;
+    private List<FilterCondition> filters = new ArrayList<>();
     private List<String> labels = new ArrayList<>();
     private List<BigDecimal> values = new ArrayList<>();
     private List<AnalysisSeries> chartSeries = new ArrayList<>();
@@ -32,6 +34,8 @@ public class AnalysisSummary {
     public void setSchemaVersion(int schemaVersion) { this.schemaVersion = schemaVersion; }
     public int getSourceRowCount() { return sourceRowCount; }
     public void setSourceRowCount(int sourceRowCount) { this.sourceRowCount = sourceRowCount; }
+    public Integer getFilteredRowCount() { return filteredRowCount; }
+    public void setFilteredRowCount(Integer filteredRowCount) { this.filteredRowCount = filteredRowCount; }
     public int getGroupCount() { return groupCount; }
     public void setGroupCount(int groupCount) { this.groupCount = groupCount; }
     public String getDimensionField() { return dimensionField; }
@@ -52,6 +56,10 @@ public class AnalysisSummary {
     public void setNote(String note) { this.note = note; }
     public String getPlanReason() { return planReason; }
     public void setPlanReason(String planReason) { this.planReason = planReason; }
+    public List<FilterCondition> getFilters() { return filters; }
+    public void setFilters(List<FilterCondition> filters) {
+        this.filters = filters == null ? new ArrayList<>() : new ArrayList<>(filters);
+    }
     public List<String> getLabels() { return labels; }
     public void setLabels(List<String> labels) { this.labels = labels; }
     public List<BigDecimal> getValues() { return values; }

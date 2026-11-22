@@ -20,6 +20,7 @@
         <dependency><groupId>com.yupi</groupId><artifactId>bi-ai-runtime</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.yupi</groupId><artifactId>bi-module-user-biz</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>com.yupi</groupId><artifactId>bi-module-chart-biz</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>com.yupi</groupId><artifactId>bi-module-file-biz</artifactId><version>${project.version}</version></dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

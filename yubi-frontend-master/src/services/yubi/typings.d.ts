@@ -124,6 +124,7 @@ declare namespace API {
     chartData?: string;
     chartType?: string;
     createTime?: string;
+    datasetId?: number;
     estimatedCostCny?: number;
     execMessage?: string;
     genChart?: string;
@@ -133,10 +134,25 @@ declare namespace API {
     isDelete?: number;
     latencyMs?: number;
     name?: string;
+    parentChartId?: number;
     status?: string;
     totalTokens?: number;
     updateTime?: string;
     userId?: number;
+  };
+
+  type FollowUpChartRequest = {
+    chartType?: string;
+    goal?: string;
+    name?: string;
+    parentChartId?: number;
+  };
+
+  type GenChartByDatasetRequest = {
+    chartType?: string;
+    datasetId?: number;
+    goal?: string;
+    name?: string;
   };
 
   type ChartAddRequest = {

@@ -13,9 +13,17 @@ public final class AnalysisChartContext {
     private final String status;
     private final String genChart;
     private final String genResult;
+    private final Long datasetId;
+    private final Long parentChartId;
 
     public AnalysisChartContext(Long chartId, Long userId, String name, String goal, String chartType,
                                 String chartData, String status, String genChart, String genResult) {
+        this(chartId, userId, name, goal, chartType, chartData, status, genChart, genResult, null, null);
+    }
+
+    public AnalysisChartContext(Long chartId, Long userId, String name, String goal, String chartType,
+                                String chartData, String status, String genChart, String genResult,
+                                Long datasetId, Long parentChartId) {
         this.chartId = chartId;
         this.userId = userId;
         this.name = name;
@@ -25,6 +33,8 @@ public final class AnalysisChartContext {
         this.status = status;
         this.genChart = genChart;
         this.genResult = genResult;
+        this.datasetId = datasetId;
+        this.parentChartId = parentChartId;
     }
 
     public Long getChartId() { return chartId; }
@@ -36,4 +46,6 @@ public final class AnalysisChartContext {
     public String getStatus() { return status; }
     public String getGenChart() { return genChart; }
     public String getGenResult() { return genResult; }
+    public Long getDatasetId() { return datasetId; }
+    public Long getParentChartId() { return parentChartId; }
 }

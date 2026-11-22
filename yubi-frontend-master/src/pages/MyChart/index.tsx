@@ -1,13 +1,22 @@
-import { deleteChartUsingPOST, listMyChartByPageUsingPOST } from '@/services/yubi/chartController';
+import {
+  deleteChartUsingPOST,
+  followUpChartUsingPOST,
+  getChartByIdUsingGET,
+  listMyChartByPageUsingPOST,
+} from '@/services/yubi/chartController';
 import {
   BarChartOutlined,
+  BranchesOutlined,
+  BulbOutlined,
   CheckCircleFilled,
   ClockCircleFilled,
   DeleteOutlined,
   ExclamationCircleFilled,
   PlusOutlined,
   ReloadOutlined,
+  RollbackOutlined,
   SearchOutlined,
+  SendOutlined,
   SyncOutlined,
 } from '@ant-design/icons';
 import { history } from '@umijs/max';
@@ -73,6 +82,38 @@ const getChartOption = (chart?: API.Chart) => {
   }
 };
 
+type AnalysisSummaryMeta = {
+  schemaVersion?: number;
+  sourceRowCount?: number;
+  filteredRowCount?: number;
+  dimensionField?: string;
+  seriesField?: string;
+  metricField?: string;
+  aggregation?: string;
+  note?: string;
+  planReason?: string;
+  filters?: { field?: string; operator?: string; values?: string[] }[];
+};
+
+const parseSummaryMeta = (chart?: API.Chart): AnalysisSummaryMeta | undefined => {
+  if (!chart?.chartData) return undefined;
+  try {
+    const parsed = JSON.parse(chart.chartData);
+    if (parsed && typeof parsed === 'object' && parsed.dimensionField) {
+      return parsed as AnalysisSummaryMeta;
+    }
+    return undefined;
+  } catch (_error) {
+    return undefined;
+  }
+};
+
+const FOLLOWUP_PRESETS = [
+  '按另一维度拆成堆叠图对比',
+  '只看排名第一的类别做细分分析',
+  '改用折线图查看变化趋势',
+];
+
 const formatDate = (value?: string) => {
   if (!value) return '时间未记录';
   const date = new Date(value);
@@ -88,6 +129,8 @@ const MyChart: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [selectedChart, setSelectedChart] = useState<API.Chart>();
+  const [followUpGoal, setFollowUpGoal] = useState('');
+  const [followUpLoading, setFollowUpLoading] = useState(false);
 
   const loadCharts = useCallback(async () => {
     setLoading(true);
@@ -139,6 +182,47 @@ const MyChart: React.FC = () => {
       else void loadCharts();
     } catch (error: any) {
       message.error(error?.response?.data?.message || error?.message || '删除失败');
+    }
+  };
+
+  const openChartById = async (chartId: number) => {
+    try {
+      const res = await getChartByIdUsingGET({ id: chartId });
+      if (res.data) {
+        setSelectedChart(res.data);
+        setFollowUpGoal('');
+      }
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || error?.message || '加载图表详情失败');
+    }
+  };
+
+  const submitFollowUp = async (goalText?: string) => {
+    const actualGoal = (goalText ?? followUpGoal).trim();
+    if (!selectedChart?.id) return;
+    if (!actualGoal) {
+      message.warning('请输入追问或下钻目标');
+      return;
+    }
+    setFollowUpLoading(true);
+    try {
+      const res = await followUpChartUsingPOST({
+        parentChartId: selectedChart.id,
+        goal: actualGoal,
+      });
+      const newChartId = res.data?.chartId;
+      if (!newChartId) {
+        message.error(res.message || '下钻分析未返回新图表');
+        return;
+      }
+      message.success('下钻分析完成，已切换至新图表');
+      setFollowUpGoal('');
+      void loadCharts();
+      await openChartById(newChartId);
+    } catch (error: any) {
+      message.error(error?.response?.data?.message || error?.message || '下钻分析失败');
+    } finally {
+      setFollowUpLoading(false);
     }
   };
 
@@ -374,51 +458,141 @@ const MyChart: React.FC = () => {
         className="chart-detail-modal"
         title={selectedChart?.name || '分析详情'}
       >
-        {selectedChart && (
-          <div className="chart-detail">
-            <div className="chart-detail__meta">
-              <Tag color={statusMeta[normalizeStatus(selectedChart.status)].color}>
-                {statusMeta[normalizeStatus(selectedChart.status)].label}
-              </Tag>
-              {selectedChart.actualModel && <Tag color="blue">{selectedChart.actualModel}</Tag>}
-              {selectedChart.totalTokens !== undefined && selectedChart.totalTokens !== null && (
-                <Tag color="geekblue">
-                  {selectedChart.totalTokens.toLocaleString('zh-CN')} Tokens
+        {selectedChart && (() => {
+          const summaryMeta = parseSummaryMeta(selectedChart);
+          return (
+            <div className="chart-detail">
+              <div className="chart-detail__meta">
+                <Tag color={statusMeta[normalizeStatus(selectedChart.status)].color}>
+                  {statusMeta[normalizeStatus(selectedChart.status)].label}
                 </Tag>
+                {selectedChart.actualModel && <Tag color="blue">{selectedChart.actualModel}</Tag>}
+                {selectedChart.totalTokens !== undefined && selectedChart.totalTokens !== null && (
+                  <Tag color="geekblue">
+                    {selectedChart.totalTokens.toLocaleString('zh-CN')} Tokens
+                  </Tag>
+                )}
+                {selectedChart.latencyMs !== undefined && selectedChart.latencyMs !== null && (
+                  <Tag color="cyan">
+                    {selectedChart.latencyMs >= 1000
+                      ? `${(selectedChart.latencyMs / 1000).toFixed(2)}s`
+                      : `${selectedChart.latencyMs}ms`}
+                  </Tag>
+                )}
+                {selectedChart.parentChartId && (
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<RollbackOutlined />}
+                    onClick={() => void openChartById(selectedChart.parentChartId!)}
+                  >
+                    返回上级图表 #{selectedChart.parentChartId}
+                  </Button>
+                )}
+                <Text type="secondary">
+                  {selectedChart.chartType || '图表类型未记录'} ·{' '}
+                  {formatDate(selectedChart.createTime)}
+                </Text>
+              </div>
+              <section className="chart-detail__section">
+                <Text className="chart-record__label">分析目标</Text>
+                <Paragraph>{selectedChart.goal || '未填写分析目标'}</Paragraph>
+              </section>
+              {summaryMeta && (
+                <section className="chart-detail__explain">
+                  <div className="chart-detail__explain-title">
+                    <BulbOutlined /> AI 规划与本地统计口径透明化
+                  </div>
+                  <Space wrap size={[6, 6]} style={{ marginBottom: 8 }}>
+                    <Tag color="processing">维度：{summaryMeta.dimensionField}</Tag>
+                    {summaryMeta.seriesField && (
+                      <Tag color="purple">堆叠系列：{summaryMeta.seriesField}</Tag>
+                    )}
+                    <Tag color="default">
+                      口径：{summaryMeta.aggregation || 'COUNT'}
+                      {summaryMeta.metricField ? `(${summaryMeta.metricField})` : ''}
+                    </Tag>
+                    {summaryMeta.sourceRowCount !== undefined && (
+                      <Tag color="green">
+                        全量计算：{summaryMeta.sourceRowCount} 行
+                        {summaryMeta.filteredRowCount !== undefined
+                          ? ` → 筛选后 ${summaryMeta.filteredRowCount} 行`
+                          : ''}
+                      </Tag>
+                    )}
+                    {summaryMeta.filters?.map((f, idx) => (
+                      <Tag color="orange" key={`${f.field}-${idx}`}>
+                        过滤：{f.field} {f.operator} {(f.values || []).join('/')}
+                      </Tag>
+                    ))}
+                  </Space>
+                  {summaryMeta.planReason && (
+                    <Paragraph className="chart-detail__explain-text">
+                      <Text strong>字段选择依据：</Text>
+                      {summaryMeta.planReason}
+                    </Paragraph>
+                  )}
+                  {summaryMeta.note && (
+                    <Paragraph className="chart-detail__explain-note" type="secondary">
+                      {summaryMeta.note}
+                    </Paragraph>
+                  )}
+                </section>
               )}
-              {selectedChart.latencyMs !== undefined && selectedChart.latencyMs !== null && (
-                <Tag color="cyan">
-                  {selectedChart.latencyMs >= 1000
-                    ? `${(selectedChart.latencyMs / 1000).toFixed(2)}s`
-                    : `${selectedChart.latencyMs}ms`}
-                </Tag>
+              {selectedChart.genResult && (
+                <section className="chart-detail__conclusion">
+                  <Text className="chart-record__label">分析结论</Text>
+                  <Paragraph>{selectedChart.genResult}</Paragraph>
+                </section>
               )}
-              <Text type="secondary">
-                {selectedChart.chartType || '图表类型未记录'} ·{' '}
-                {formatDate(selectedChart.createTime)}
-              </Text>
+              {selectedChart.execMessage && normalizeStatus(selectedChart.status) === 'failed' && (
+                <section className="chart-detail__failure">
+                  <Text strong>失败原因</Text>
+                  <Paragraph>{selectedChart.execMessage}</Paragraph>
+                </section>
+              )}
+              {normalizeStatus(selectedChart.status) === 'succeeded' && (
+                <div className="chart-detail__preview">{renderChart(selectedChart, false)}</div>
+              )}
+              {normalizeStatus(selectedChart.status) === 'succeeded' && selectedChart.datasetId && (
+                <section className="chart-detail__followup">
+                  <div className="chart-detail__followup-title">
+                    <BranchesOutlined /> 基于当前数据集继续追问 / 下钻
+                  </div>
+                  <Space wrap size={[8, 8]} style={{ marginBottom: 10 }}>
+                    {FOLLOWUP_PRESETS.map((preset) => (
+                      <Button
+                        key={preset}
+                        size="small"
+                        disabled={followUpLoading}
+                        onClick={() => void submitFollowUp(preset)}
+                      >
+                        {preset}
+                      </Button>
+                    ))}
+                  </Space>
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Input
+                      value={followUpGoal}
+                      onChange={(e) => setFollowUpGoal(e.target.value)}
+                      onPressEnter={() => void submitFollowUp()}
+                      placeholder="输入下钻追问，例如：只看华东区，按渠道拆成堆叠图"
+                      disabled={followUpLoading}
+                    />
+                    <Button
+                      type="primary"
+                      icon={<SendOutlined />}
+                      loading={followUpLoading}
+                      onClick={() => void submitFollowUp()}
+                    >
+                      发起下钻
+                    </Button>
+                  </Space.Compact>
+                </section>
+              )}
             </div>
-            <section className="chart-detail__section">
-              <Text className="chart-record__label">分析目标</Text>
-              <Paragraph>{selectedChart.goal || '未填写分析目标'}</Paragraph>
-            </section>
-            {selectedChart.genResult && (
-              <section className="chart-detail__conclusion">
-                <Text className="chart-record__label">分析结论</Text>
-                <Paragraph>{selectedChart.genResult}</Paragraph>
-              </section>
-            )}
-            {selectedChart.execMessage && normalizeStatus(selectedChart.status) === 'failed' && (
-              <section className="chart-detail__failure">
-                <Text strong>失败原因</Text>
-                <Paragraph>{selectedChart.execMessage}</Paragraph>
-              </section>
-            )}
-            {normalizeStatus(selectedChart.status) === 'succeeded' && (
-              <div className="chart-detail__preview">{renderChart(selectedChart, false)}</div>
-            )}
-          </div>
-        )}
+          );
+        })()}
       </Modal>
     </div>
   );

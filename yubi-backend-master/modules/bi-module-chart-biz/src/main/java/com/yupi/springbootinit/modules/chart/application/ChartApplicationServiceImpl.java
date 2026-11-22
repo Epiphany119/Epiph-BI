@@ -60,6 +60,8 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
         chart.setChartType(command.getChartType());
         chart.setChartData(command.getChartData());
         chart.setUserId(command.getUserId());
+        chart.setDatasetId(command.getDatasetId());
+        chart.setParentChartId(command.getParentChartId());
         chart.setStatus(WAITING);
         chart.setAttemptCount(0);
         chart.setMaxAttempts(DEFAULT_MAX_ATTEMPTS);
@@ -236,7 +238,8 @@ public class ChartApplicationServiceImpl implements ChartApplicationService {
 
     private AnalysisChartContext toContext(Chart chart) {
         return new AnalysisChartContext(chart.getId(), chart.getUserId(), chart.getName(), chart.getGoal(),
-                chart.getChartType(), chart.getChartData(), chart.getStatus(), chart.getGenChart(), chart.getGenResult());
+                chart.getChartType(), chart.getChartData(), chart.getStatus(), chart.getGenChart(),
+                chart.getGenResult(), chart.getDatasetId(), chart.getParentChartId());
     }
 
     private String sanitize(String message) {

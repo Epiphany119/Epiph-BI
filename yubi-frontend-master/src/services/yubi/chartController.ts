@@ -200,6 +200,36 @@ export async function listMyChartByPageUsingPOST(
   });
 }
 
+/** genChartByDataset POST /api/chart/gen/by-dataset */
+export async function genChartByDatasetUsingPOST(
+  body: API.GenChartByDatasetRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseBiResponse_>('/api/chart/gen/by-dataset', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** followUpChart POST /api/chart/followup */
+export async function followUpChartUsingPOST(
+  body: API.FollowUpChartRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseBiResponse_>('/api/chart/followup', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
 /** getMyUsageSummary GET /api/chart/usage/summary */
 export async function getMyUsageSummaryUsingGET(options?: { [key: string]: any }) {
   return request<API.BaseResponseAiUsageSummaryVO_>('/api/chart/usage/summary', {

@@ -100,6 +100,16 @@ public class Chart implements Serializable {
     private Long latencyMs;
 
     /**
+     * 关联数据集 ID
+     */
+    private Long datasetId;
+
+    /**
+     * 父图表 ID（用于多轮下钻血缘）
+     */
+    private Long parentChartId;
+
+    /**
      * 用户 id
      */
     private Long userId;

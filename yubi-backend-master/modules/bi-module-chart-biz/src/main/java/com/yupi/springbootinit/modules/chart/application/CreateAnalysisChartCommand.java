@@ -1,21 +1,28 @@
 package com.yupi.springbootinit.modules.chart.application;
 
-/**
- * 创建分析图表的跨模块命令；用户 ID 必须来自服务端认证上下文。
- */
-public final class CreateAnalysisChartCommand {
+/** 创建分析任务的命令对象，由 analysis-biz 传递给 chart-biz。 */
+public class CreateAnalysisChartCommand {
     private final String name;
     private final String goal;
     private final String chartType;
     private final String chartData;
     private final Long userId;
+    private final Long datasetId;
+    private final Long parentChartId;
 
     public CreateAnalysisChartCommand(String name, String goal, String chartType, String chartData, Long userId) {
+        this(name, goal, chartType, chartData, userId, null, null);
+    }
+
+    public CreateAnalysisChartCommand(String name, String goal, String chartType, String chartData,
+                                      Long userId, Long datasetId, Long parentChartId) {
         this.name = name;
         this.goal = goal;
         this.chartType = chartType;
         this.chartData = chartData;
         this.userId = userId;
+        this.datasetId = datasetId;
+        this.parentChartId = parentChartId;
     }
 
     public String getName() { return name; }
@@ -23,4 +30,6 @@ public final class CreateAnalysisChartCommand {
     public String getChartType() { return chartType; }
     public String getChartData() { return chartData; }
     public Long getUserId() { return userId; }
+    public Long getDatasetId() { return datasetId; }
+    public Long getParentChartId() { return parentChartId; }
 }

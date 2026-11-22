@@ -67,17 +67,24 @@ public class SpreadsheetAnalysisService {
                 resolveChartType(requestedChartType), safeLabel(goal), null);
     }
 
-    /** 模型先根据目标和表格画像选择字段与口径；服务端校验方案，再对全量行精确计算。 */
+    /** 模型先根据目标和表格画像选择字段与口径；服务端校验方案与过滤条件，再对全量行精确计算。 */
     public AnalysisSummary analyze(String csvData, AnalysisPlan plan, String goal,
                                    String requestedChartType, String chartName) {
         if (csvData == null || csvData.isBlank()) throw new IllegalArgumentException("表格中没有可分析的数据");
         if (goal == null || goal.isBlank()) throw new IllegalArgumentException("分析目标不能为空");
         if (plan == null) throw new IllegalArgumentException("模型没有返回分析方案");
 
-        ParsedTable table = parseTable(csvData);
-        List<ColumnProfile> profiles = profile(table.headers, table.rows);
+        ParsedTable rawTable = parseTable(csvData);
+        List<ColumnProfile> rawProfiles = profile(rawTable.headers, rawTable.rows);
+        List<FilterCondition> activeFilters = plan.getFilters() == null ? List.of() : plan.getFilters();
+        ParsedTable table = activeFilters.isEmpty() ? rawTable : applyFilters(rawTable, rawProfiles, activeFilters);
+        List<ColumnProfile> profiles = activeFilters.isEmpty() ? rawProfiles : profile(table.headers, table.rows);
+
         ColumnProfile dimension = exactColumn(profiles, plan.getDimensionField(), "分组");
-        if (dimension.nonEmpty == 0 || dimension.distinctValues.size() < 2) {
+        if (dimension.nonEmpty == 0 || dimension.distinctValues.size() < 1) {
+            throw new IllegalArgumentException("模型选择的分组字段“" + dimension.name + "”没有有效数据");
+        }
+        if (activeFilters.isEmpty() && dimension.distinctValues.size() < 2) {
             throw new IllegalArgumentException("模型选择的分组字段“" + dimension.name + "”没有足够的不同值");
         }
 
@@ -106,14 +113,86 @@ public class SpreadsheetAnalysisService {
             if (seriesDimension == dimension || seriesDimension == measure) {
                 throw new IllegalArgumentException("堆叠系列字段必须与横轴分组字段和统计字段不同");
             }
-            if (seriesDimension.nonEmpty == 0 || seriesDimension.distinctValues.size() < 2) {
+            if (seriesDimension.nonEmpty == 0 || (activeFilters.isEmpty() && seriesDimension.distinctValues.size() < 2)) {
                 throw new IllegalArgumentException("堆叠系列字段需要至少两个不同类别");
             }
         }
         String chartTitle = plan.getChartTitle() == null || plan.getChartTitle().isBlank()
                 ? safeLabel(goal) : safeLabel(plan.getChartTitle());
-        return aggregate(table, dimension, seriesDimension, measure, aggregation,
+        AnalysisSummary summary = aggregate(table, dimension, seriesDimension, measure, aggregation,
                 chartType, chartTitle, plan.getReason());
+        summary.setSourceRowCount(rawTable.rows.size());
+        if (!activeFilters.isEmpty()) {
+            summary.setFilteredRowCount(table.rows.size());
+            summary.setFilters(activeFilters);
+            summary.setNote("已按本地确定性条件筛选（" + describeFilters(activeFilters)
+                    + "），共从 " + rawTable.rows.size() + " 条记录中筛出 " + table.rows.size() + " 条参与统计。"
+                    + (summary.getNote() == null ? "" : summary.getNote()));
+        }
+        return summary;
+    }
+
+    /** 在本地对全量行执行确定性条件过滤，严格校验表头与操作符白名单。 */
+    private ParsedTable applyFilters(ParsedTable table, List<ColumnProfile> profiles, List<FilterCondition> filters) {
+        List<ColumnProfile> filterColumns = new ArrayList<>(filters.size());
+        for (FilterCondition filter : filters) {
+            filterColumns.add(exactColumn(profiles, filter.getField(), "过滤"));
+        }
+        List<List<String>> matchedRows = new ArrayList<>();
+        for (List<String> row : table.rows) {
+            boolean allMatched = true;
+            for (int i = 0; i < filters.size(); i++) {
+                String cell = row.get(filterColumns.get(i).index).trim();
+                if (!matchesFilter(cell, filters.get(i))) {
+                    allMatched = false;
+                    break;
+                }
+            }
+            if (allMatched) {
+                matchedRows.add(row);
+            }
+        }
+        if (matchedRows.isEmpty()) {
+            throw new IllegalArgumentException("按条件过滤（" + describeFilters(filters) + "）后没有匹配的数据行，请调整筛选条件");
+        }
+        return new ParsedTable(table.headers, matchedRows);
+    }
+
+    private boolean matchesFilter(String cell, FilterCondition filter) {
+        String op = filter.getOperator() == null ? "EQUALS" : filter.getOperator().trim().toUpperCase(Locale.ROOT);
+        List<String> values = filter.getValues();
+        if (values == null || values.isEmpty()) return true;
+        switch (op) {
+            case "EQUALS":
+                return cell.equalsIgnoreCase(values.get(0));
+            case "NOT_EQUALS":
+                return !cell.equalsIgnoreCase(values.get(0));
+            case "IN":
+                return values.stream().anyMatch(v -> cell.equalsIgnoreCase(v));
+            case "CONTAINS":
+                String lowerCell = cell.toLowerCase(Locale.ROOT);
+                return values.stream().anyMatch(v -> lowerCell.contains(v.toLowerCase(Locale.ROOT)));
+            case "GT":
+            case "GTE":
+            case "LT":
+            case "LTE":
+                BigDecimal cellNum = parseNumber(cell);
+                BigDecimal targetNum = parseNumber(values.get(0));
+                if (cellNum == null || targetNum == null) return false;
+                int cmp = cellNum.compareTo(targetNum);
+                if ("GT".equals(op)) return cmp > 0;
+                if ("GTE".equals(op)) return cmp >= 0;
+                if ("LT".equals(op)) return cmp < 0;
+                return cmp <= 0;
+            default:
+                throw new IllegalArgumentException("不支持的过滤操作符: " + op);
+        }
+    }
+
+    private String describeFilters(List<FilterCondition> filters) {
+        return filters.stream()
+                .map(f -> f.getField() + " " + f.getOperator() + " " + String.join("/", f.getValues()))
+                .collect(Collectors.joining(" 且 "));
     }
 
     /** 为模型规划提供完整列画像、示例值和少量代表行；原始全量数据仍用于本地精确聚合。 */

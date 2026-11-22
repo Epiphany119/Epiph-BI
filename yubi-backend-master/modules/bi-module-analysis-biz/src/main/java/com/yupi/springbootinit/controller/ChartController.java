@@ -103,6 +103,38 @@ public class ChartController {
         return ResultUtils.success(toBiResponse(result));
     }
 
+    /** 基于已保存的可复用数据集发起同步分析。 */
+    @PostMapping("/gen/by-dataset")
+    public BaseResponse<BiResponse> genChartByDataset(
+            @org.springframework.web.bind.annotation.RequestBody com.yupi.springbootinit.model.dto.chart.GenChartByDatasetRequest requestBody,
+            HttpServletRequest request) {
+        if (requestBody == null) {
+            throw new IllegalArgumentException("分析请求不能为空");
+        }
+        User loginUser = userService.getLoginUser(request);
+        redisLimiterManager.doRateLimit("genChartByAi_" + loginUser.getId());
+        AnalysisTaskResult result = analysisTaskApplicationService.executeByDataset(
+                requestBody.getDatasetId(), requestBody.getName(), requestBody.getGoal(),
+                requestBody.getChartType(), loginUser.getId());
+        return ResultUtils.success(toBiResponse(result));
+    }
+
+    /** 基于已有图表及其关联数据集发起多轮追问下钻分析。 */
+    @PostMapping("/followup")
+    public BaseResponse<BiResponse> followUpChart(
+            @org.springframework.web.bind.annotation.RequestBody com.yupi.springbootinit.model.dto.chart.FollowUpChartRequest requestBody,
+            HttpServletRequest request) {
+        if (requestBody == null) {
+            throw new IllegalArgumentException("追问请求不能为空");
+        }
+        User loginUser = userService.getLoginUser(request);
+        redisLimiterManager.doRateLimit("genChartByAi_" + loginUser.getId());
+        AnalysisTaskResult result = analysisTaskApplicationService.executeFollowUp(
+                requestBody.getParentChartId(), requestBody.getGoal(), requestBody.getChartType(),
+                requestBody.getName(), loginUser.getId());
+        return ResultUtils.success(toBiResponse(result));
+    }
+
     private AnalysisTaskCommand command(MultipartFile file, GenChartByAiRequest requestBody, User user) {
         if (requestBody == null) {
             throw new IllegalArgumentException("分析请求不能为空");

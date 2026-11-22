@@ -22,6 +22,8 @@
             <result property="totalTokens" column="totalTokens" jdbcType="INTEGER"/>
             <result property="estimatedCostCny" column="estimatedCostCny" jdbcType="DECIMAL"/>
             <result property="latencyMs" column="latencyMs" jdbcType="BIGINT"/>
+            <result property="datasetId" column="datasetId" jdbcType="BIGINT"/>
+            <result property="parentChartId" column="parentChartId" jdbcType="BIGINT"/>
             <result property="userId" column="userId" jdbcType="BIGINT"/>
             <result property="createTime" column="createTime" jdbcType="TIMESTAMP"/>
             <result property="updateTime" column="updateTime" jdbcType="TIMESTAMP"/>
@@ -33,6 +35,7 @@
         chartType,genChart,genResult,status,execMessage,
         attemptCount,maxAttempts,leaseExpireTime,workerId,
         actualModel,totalTokens,estimatedCostCny,latencyMs,
+        datasetId,parentChartId,
         userId,createTime,updateTime,isDelete
     </sql>
 

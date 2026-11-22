@@ -16,6 +16,9 @@ import com.yupi.springbootinit.modules.chart.application.ChartApplicationService
 import com.yupi.springbootinit.modules.chart.application.CreateAnalysisChartCommand;
 import com.yupi.springbootinit.modules.chart.application.ReclaimResult;
 import com.yupi.springbootinit.modules.chart.application.RecordAiUsageCommand;
+import com.yupi.springbootinit.modules.file.application.DatasetApplicationService;
+import com.yupi.springbootinit.modules.file.application.DatasetContent;
+import com.yupi.springbootinit.modules.file.model.vo.DatasetVO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,6 +39,7 @@ public class AnalysisTaskApplicationService {
     public static final String FAILED = "FAILED";
     public static final String STAGE_PLANNING = "PLANNING";
     public static final String STAGE_EXPLAINING = "EXPLAINING";
+    public static final String STAGE_FOLLOWUP = "FOLLOWUP";
     public static final int DEFAULT_LEASE_SECONDS = 120;
 
     private final ChartApplicationService chartApplicationService;
@@ -46,6 +50,7 @@ public class AnalysisTaskApplicationService {
     private final AnalysisPlanParser planParser;
     private final SpreadsheetAnalysisService spreadsheetAnalysisService;
     private final AiRuntimeProperties aiRuntimeProperties;
+    private final DatasetApplicationService datasetApplicationService;
     private final int leaseSeconds;
     private final Supplier<String> workerIdGenerator;
 
@@ -58,10 +63,11 @@ public class AnalysisTaskApplicationService {
                                           AnalysisPlanParser planParser,
                                           SpreadsheetAnalysisService spreadsheetAnalysisService,
                                           AiRuntimeProperties aiRuntimeProperties,
+                                          @Autowired(required = false) DatasetApplicationService datasetApplicationService,
                                           @Value("${analysis.task.lease-seconds:120}") int leaseSeconds) {
         this(chartApplicationService, aiChatClient, dataConverter, promptBuilder, resultParser,
-                planParser, spreadsheetAnalysisService, aiRuntimeProperties, leaseSeconds,
-                AnalysisTaskApplicationService::defaultWorkerId);
+                planParser, spreadsheetAnalysisService, aiRuntimeProperties, datasetApplicationService,
+                leaseSeconds, AnalysisTaskApplicationService::defaultWorkerId);
     }
 
     /** 保留轻量手工构造入口，便于现有模块内调用方平滑迁移与单元测试注入。 */
@@ -73,6 +79,7 @@ public class AnalysisTaskApplicationService {
                 new AnalysisPlanParser(new ObjectMapper()),
                 new SpreadsheetAnalysisService(new ObjectMapper()),
                 new AiRuntimeProperties(),
+                null,
                 DEFAULT_LEASE_SECONDS,
                 AnalysisTaskApplicationService::defaultWorkerId);
     }
@@ -87,7 +94,7 @@ public class AnalysisTaskApplicationService {
                                    int leaseSeconds,
                                    Supplier<String> workerIdGenerator) {
         this(chartApplicationService, aiChatClient, dataConverter, promptBuilder, resultParser,
-                planParser, spreadsheetAnalysisService, new AiRuntimeProperties(), leaseSeconds, workerIdGenerator);
+                planParser, spreadsheetAnalysisService, new AiRuntimeProperties(), null, leaseSeconds, workerIdGenerator);
     }
 
     AnalysisTaskApplicationService(ChartApplicationService chartApplicationService, AiChatClient aiChatClient,
@@ -97,6 +104,7 @@ public class AnalysisTaskApplicationService {
                                    AnalysisPlanParser planParser,
                                    SpreadsheetAnalysisService spreadsheetAnalysisService,
                                    AiRuntimeProperties aiRuntimeProperties,
+                                   DatasetApplicationService datasetApplicationService,
                                    int leaseSeconds,
                                    Supplier<String> workerIdGenerator) {
         this.chartApplicationService = chartApplicationService;
@@ -107,6 +115,7 @@ public class AnalysisTaskApplicationService {
         this.planParser = planParser;
         this.spreadsheetAnalysisService = spreadsheetAnalysisService;
         this.aiRuntimeProperties = aiRuntimeProperties != null ? aiRuntimeProperties : new AiRuntimeProperties();
+        this.datasetApplicationService = datasetApplicationService;
         this.leaseSeconds = leaseSeconds > 0 ? leaseSeconds : DEFAULT_LEASE_SECONDS;
         this.workerIdGenerator = workerIdGenerator != null
                 ? workerIdGenerator
@@ -128,44 +137,120 @@ public class AnalysisTaskApplicationService {
         return executeExistingTask(createWaitingTask(command));
     }
 
-    /** 模型先选择字段与统计口径；本地精确统计后保存快照，再创建 WAITING 任务供解释阶段执行。 */
+    /** 基于已保存的可复用数据集发起同步智能分析。 */
+    public AnalysisTaskResult executeByDataset(Long datasetId, String name, String goal, String chartType, Long userId) {
+        if (datasetApplicationService == null) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "数据集服务未启用");
+        }
+        if (goal == null || goal.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "分析目标不能为空");
+        }
+        DatasetContent dataset = datasetApplicationService.getOwnedDatasetContent(datasetId, userId);
+        String resolvedName = name == null || name.isBlank() ? dataset.getName() + " - 分析" : name.trim();
+        Long chartId = planAndCreateWaitingTask(
+                dataset.getCsvContent(), resolvedName, goal.trim(), chartType,
+                userId, dataset.getId(), null, null, STAGE_PLANNING);
+        return executeExistingTask(chartId);
+    }
+
+    /** 基于已有图表及其关联数据集发起多轮追问/下钻分析，保留父子血缘关系。 */
+    public AnalysisTaskResult executeFollowUp(Long parentChartId, String followUpGoal, String chartType,
+                                              String name, Long userId) {
+        if (datasetApplicationService == null) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "数据集服务未启用");
+        }
+        if (parentChartId == null || parentChartId <= 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "父图表 ID 无效");
+        }
+        if (followUpGoal == null || followUpGoal.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "追问目标不能为空");
+        }
+        AnalysisChartContext parent = chartApplicationService.getAnalysisContext(parentChartId);
+        if (!userId.equals(parent.getUserId())) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR, "无权对该图表发起追问下钻");
+        }
+        if (parent.getDatasetId() == null) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "该历史图表未关联可复用数据集，请重新上传表格后体验多轮下钻");
+        }
+        DatasetContent dataset = datasetApplicationService.getOwnedDatasetContent(parent.getDatasetId(), userId);
+        String resolvedName = name == null || name.isBlank()
+                ? (parent.getName() == null ? "下钻分析" : parent.getName() + " · 追问")
+                : name.trim();
+        Long childChartId = planAndCreateWaitingTask(
+                dataset.getCsvContent(), resolvedName, followUpGoal.trim(), chartType,
+                userId, dataset.getId(), parentChartId, parent.getChartData(), STAGE_FOLLOWUP);
+        return executeExistingTask(childChartId);
+    }
+
+    /** 模型先选择字段与统计口径；本地精确统计后保存快照，再沉淀数据集并创建 WAITING 任务供解释阶段执行。 */
     public Long createWaitingTask(AnalysisTaskCommand command) {
+        String csvData;
+        String originalFilename;
+        try {
+            validate(command);
+            csvData = dataConverter.convert(command.getFile());
+            originalFilename = command.getFile().getOriginalFilename();
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, e.getMessage());
+        }
+        Long datasetId = saveDatasetSafely(command.getUserId(), command.getName(), originalFilename, csvData);
+        return planAndCreateWaitingTask(csvData, command.getName(), command.getGoal(), command.getChartType(),
+                command.getUserId(), datasetId, null, null, STAGE_PLANNING);
+    }
+
+    private Long planAndCreateWaitingTask(String csvData, String name, String goal, String chartType,
+                                          Long userId, Long datasetId, Long parentChartId,
+                                          String parentSummaryJson, String stage) {
         AnalysisSummary summary;
         AiChatResponse planningResponse = null;
         String requestedModel = aiRuntimeProperties.getDefaultModel();
         long startedNs = System.nanoTime();
         try {
-            validate(command);
-            String csvData = dataConverter.convert(command.getFile());
             AiChatRequest planningRequest = new AiChatRequest();
             planningRequest.setSystemPrompt(promptBuilder.buildPlanningSystemPrompt());
-            planningRequest.setUserMessage(promptBuilder.buildPlanningUserMessage(command.getGoal(),
-                    command.getChartType(), spreadsheetAnalysisService.describeDataset(csvData)));
+            String datasetProfile = spreadsheetAnalysisService.describeDataset(csvData);
+            if (parentSummaryJson != null) {
+                planningRequest.setUserMessage(promptBuilder.buildFollowUpPlanningUserMessage(
+                        goal, chartType, parentSummaryJson, datasetProfile));
+            } else {
+                planningRequest.setUserMessage(promptBuilder.buildPlanningUserMessage(goal, chartType, datasetProfile));
+            }
             planningRequest.setTraceId("analysis-plan-" + UUID.randomUUID());
             planningResponse = aiChatClient.chat(planningRequest);
             AnalysisPlan plan = planParser.parse(planningResponse.getContent());
-            summary = spreadsheetAnalysisService.analyze(
-                    csvData, plan, command.getGoal(), command.getChartType(), command.getName());
+            summary = spreadsheetAnalysisService.analyze(csvData, plan, goal, chartType, name);
         } catch (IllegalArgumentException e) {
-            if (planningResponse != null && command != null && command.getUserId() != null) {
-                recordUsageSafely(command.getUserId(), null, STAGE_PLANNING, requestedModel,
+            if (planningResponse != null && userId != null) {
+                recordUsageSafely(userId, null, stage, requestedModel,
                         planningResponse, true, null, elapsedMs(startedNs));
             }
-            // 文件限制、模型澄清和无效字段方案需反馈给用户，避免被全局异常处理器隐藏成“系统错误”。
             throw new BusinessException(ErrorCode.PARAMS_ERROR, e.getMessage());
         } catch (RuntimeException e) {
-            if (command != null && command.getUserId() != null) {
-                recordUsageSafely(command.getUserId(), null, STAGE_PLANNING, requestedModel,
+            if (userId != null) {
+                recordUsageSafely(userId, null, stage, requestedModel,
                         null, false, extractErrorCode(e), elapsedMs(startedNs));
             }
             throw e;
         }
         Long chartId = chartApplicationService.createAnalysisTask(new CreateAnalysisChartCommand(
-                command.getName(), command.getGoal(), command.getChartType(),
-                spreadsheetAnalysisService.serialize(summary), command.getUserId()));
-        recordUsageSafely(command.getUserId(), chartId, STAGE_PLANNING, requestedModel,
+                name, goal, chartType, spreadsheetAnalysisService.serialize(summary),
+                userId, datasetId, parentChartId));
+        recordUsageSafely(userId, chartId, stage, requestedModel,
                 planningResponse, true, null, elapsedMs(startedNs));
         return chartId;
+    }
+
+    private Long saveDatasetSafely(Long userId, String chartName, String originalFilename, String csvData) {
+        if (datasetApplicationService == null || userId == null) {
+            return null;
+        }
+        try {
+            DatasetVO saved = datasetApplicationService.saveFromCsv(userId, chartName, originalFilename, csvData);
+            return saved != null ? saved.getId() : null;
+        } catch (RuntimeException e) {
+            log.warn("自动沉淀数据集失败，不影响主分析任务创建，userId={}", userId, e);
+            return null;
+        }
     }
 
     /**
