@@ -419,6 +419,17 @@ declare namespace API {
     userPassword?: string;
   };
 
+  type UserResetCodeRequest = {
+    userAccount?: string;
+  };
+
+  type UserResetPasswordRequest = {
+    checkPassword?: string;
+    newPassword?: string;
+    resetCode?: string;
+    userAccount?: string;
+  };
+
   type UserUpdateMyRequest = {
     userAvatar?: string;
     userName?: string;

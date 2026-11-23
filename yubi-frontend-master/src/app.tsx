@@ -10,6 +10,7 @@ import { errorConfig } from './requestConfig';
 
 const isDev = process.env.NODE_ENV === 'development';
 const loginPath = '/user/login';
+const publicPaths = ['/user/login', '/user/register', '/user/reset-password'];
 
 /**
  * @see  https://umijs.org/zh-CN/plugins/plugin-initial-state
@@ -26,9 +27,9 @@ export async function getInitialState(): Promise<{
     }
     return undefined;
   };
-  // 如果不是登录页面，执行
+  // 如果不是公开认证页面，执行
   const { location } = history;
-  if (location.pathname !== loginPath) {
+  if (!publicPaths.includes(location.pathname)) {
     const currentUser = await fetchUserInfo();
     return {
       currentUser,
@@ -56,7 +57,7 @@ export const layout: RunTimeLayoutConfig = ({ initialState, setInitialState }) =
     onPageChange: () => {
       const { location } = history;
       // 如果没有登录，重定向到 login
-      if (!initialState?.currentUser && location.pathname !== loginPath) {
+      if (!initialState?.currentUser && !publicPaths.includes(location.pathname)) {
         history.push(loginPath);
       }
     },

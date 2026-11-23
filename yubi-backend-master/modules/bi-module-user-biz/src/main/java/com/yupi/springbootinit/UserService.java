@@ -39,6 +39,25 @@ public interface UserService extends IService<User> {
     LoginUserVO userLogin(String userAccount, String userPassword, HttpServletRequest request);
 
     /**
+     * 签发密码重置验证码（5 分钟有效，60 秒冷却）。
+     *
+     * @param userAccount 用户账号
+     * @return 仅在显式开启本地演示配置时返回验证码，否则返回 null
+     */
+    String requestPasswordResetCode(String userAccount);
+
+    /**
+     * 校验一次性验证码并重置用户密码。
+     *
+     * @param userAccount   用户账号
+     * @param resetCode     6 位重置验证码
+     * @param newPassword   新密码（至少 8 位）
+     * @param checkPassword 确认新密码
+     * @return 是否重置成功
+     */
+    boolean resetPassword(String userAccount, String resetCode, String newPassword, String checkPassword);
+
+    /**
      * 获取当前登录用户
      *
      * @param request

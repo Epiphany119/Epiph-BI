@@ -57,10 +57,12 @@ mybatis-plus:
       logic-delete-field: isDelete # 全局逻辑删除的实体字段名
       logic-delete-value: 1 # 逻辑已删除值（默认为 1）
       logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
-# 浏览器凭据请求仅允许明确配置的前端 Origin。
+# 浏览器凭据请求仅允许明确配置的前端 Origin；忘记密码验证码默认不直接透出给 HTTP 响应。
 app:
   cors:
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:8000}
+  auth:
+    return-reset-code-in-response: ${APP_AUTH_RETURN_RESET_CODE:false}
 
 # WAITING 任务由定时恢复器按批补偿；RUNNING 租约超时后自动回收重排或置失败。
 analysis:

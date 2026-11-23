@@ -14,6 +14,8 @@ import com.yupi.springbootinit.model.dto.user.UserAddRequest;
 import com.yupi.springbootinit.model.dto.user.UserLoginRequest;
 import com.yupi.springbootinit.model.dto.user.UserQueryRequest;
 import com.yupi.springbootinit.model.dto.user.UserRegisterRequest;
+import com.yupi.springbootinit.model.dto.user.UserResetCodeRequest;
+import com.yupi.springbootinit.model.dto.user.UserResetPasswordRequest;
 import com.yupi.springbootinit.model.dto.user.UserUpdateMyRequest;
 import com.yupi.springbootinit.model.dto.user.UserUpdateRequest;
 import com.yupi.springbootinit.model.entity.User;
@@ -91,6 +93,34 @@ public class UserController {
         }
         LoginUserVO loginUserVO = userService.userLogin(userAccount, userPassword, request);
         return ResultUtils.success(loginUserVO);
+    }
+
+    /**
+     * 获取密码重置验证码（忘记密码第一步）
+     */
+    @PostMapping("/password/reset-code")
+    public BaseResponse<String> requestPasswordResetCode(@RequestBody UserResetCodeRequest requestBody) {
+        if (requestBody == null || StringUtils.isBlank(requestBody.getUserAccount())) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入用户账号");
+        }
+        String devCode = userService.requestPasswordResetCode(requestBody.getUserAccount());
+        return ResultUtils.success(devCode);
+    }
+
+    /**
+     * 校验验证码并重置密码（忘记密码第二步）
+     */
+    @PostMapping("/password/reset")
+    public BaseResponse<Boolean> resetPassword(@RequestBody UserResetPasswordRequest requestBody) {
+        if (requestBody == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        boolean result = userService.resetPassword(
+                requestBody.getUserAccount(),
+                requestBody.getResetCode(),
+                requestBody.getNewPassword(),
+                requestBody.getCheckPassword());
+        return ResultUtils.success(result);
     }
 
     /**

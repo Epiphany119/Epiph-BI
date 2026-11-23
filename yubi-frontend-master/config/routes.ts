@@ -1,10 +1,11 @@
-﻿export default [
+export default [
   {
     path: '/user',
     layout: false,
     routes: [
       { path: '/user/login', component: './User/Login' },
       { path: '/user/register', component: './User/Register' },
+      { path: '/user/reset-password', component: './User/ResetPassword' },
     ],
   },
   { path: '/', redirect: '/dashboard' },

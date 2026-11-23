@@ -23,7 +23,10 @@ import javax.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import me.chanjar.weixin.common.bean.WxOAuth2UserInfo;
 import org.apache.commons.lang3.StringUtils;
+import com.yupi.springbootinit.service.PasswordResetTokenService;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 
@@ -41,6 +44,12 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * 盐值，混淆密码
      */
     private static final String SALT = "yupi";
+
+    @Autowired
+    private PasswordResetTokenService passwordResetTokenService;
+
+    @Value("${app.auth.return-reset-code-in-response:false}")
+    private boolean returnResetCodeInResponse;
 
     @Override
     public long userRegister(String userAccount, String userPassword, String checkPassword) {
@@ -107,6 +116,56 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         // 3. 记录用户的登录态
         request.getSession().setAttribute(USER_LOGIN_STATE, user);
         return this.getLoginUserVO(user);
+    }
+
+    @Override
+    public String requestPasswordResetCode(String userAccount) {
+        if (StringUtils.isBlank(userAccount) || userAccount.trim().length() < 4) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入有效的用户账号（至少 4 位）");
+        }
+        String normalizedAccount = userAccount.trim();
+        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("userAccount", normalizedAccount);
+        User user = this.baseMapper.selectOne(queryWrapper);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "该账号不存在");
+        }
+        String code = passwordResetTokenService.issueCode(normalizedAccount);
+        log.info("[PasswordReset] userAccount={}, code={}, expiresIn=300s", normalizedAccount, code);
+        return returnResetCodeInResponse ? code : null;
+    }
+
+    @Override
+    public boolean resetPassword(String userAccount, String resetCode, String newPassword, String checkPassword) {
+        if (StringUtils.isAnyBlank(userAccount, resetCode, newPassword, checkPassword)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请完整填写账号、验证码和新密码");
+        }
+        String normalizedAccount = userAccount.trim();
+        if (normalizedAccount.length() < 4) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户账号过短");
+        }
+        if (newPassword.length() < 8 || checkPassword.length() < 8) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "新密码长度不能少于 8 位");
+        }
+        if (!newPassword.equals(checkPassword)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "两次输入的新密码不一致");
+        }
+        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("userAccount", normalizedAccount);
+        User user = this.baseMapper.selectOne(queryWrapper);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "该账号不存在");
+        }
+        passwordResetTokenService.verifyAndConsumeStrict(normalizedAccount, resetCode);
+        User update = new User();
+        update.setId(user.getId());
+        update.setUserPassword(DigestUtils.md5DigestAsHex((SALT + newPassword).getBytes()));
+        boolean updated = this.updateById(update);
+        if (!updated) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "密码重置失败，请稍后重试");
+        }
+        log.info("[PasswordReset] password updated for userAccount={}", normalizedAccount);
+        return true;
     }
 
     /**

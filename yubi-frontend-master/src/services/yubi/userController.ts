@@ -135,6 +135,36 @@ export async function userRegisterUsingPOST(
   });
 }
 
+/** requestPasswordResetCode POST /api/user/password/reset-code */
+export async function requestPasswordResetCodeUsingPOST(
+  body: API.UserResetCodeRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseString_>('/api/user/password/reset-code', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** resetPassword POST /api/user/password/reset */
+export async function resetPasswordUsingPOST(
+  body: API.UserResetPasswordRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseBoolean_>('/api/user/password/reset', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
 /** updateUser POST /api/user/update */
 export async function updateUserUsingPOST(
   body: API.UserUpdateRequest,

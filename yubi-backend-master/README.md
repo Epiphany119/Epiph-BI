@@ -1,167 +1,41 @@
-# Epiph-BI 后端
+# Epiph-BI 后端多模块架构说明
 
-> 当前项目由 Epiphany119 基于下方上游模板进行二次开发；保留原作者和来源信息。
+> 当前项目由 Epiphany119 基于 [程序员鱼皮](https://github.com/liyupi) 的 Spring Boot 初始模板进行多模块架构重构与 AI 工程化二次开发；保留原作者与上游来源声明。
 
-> 作者：[程序员鱼皮](https://github.com/liyupi)
-> 仅分享于 [编程导航知识星球](https://yupi.icu)
+## 模块划分与职责边界
 
-基于 Java SpringBoot 的项目初始模板，整合了常用框架和主流业务的示例代码。
+依赖方向遵循单向分层约束（详见 [../docs/模块边界-V1.0.md](../docs/模块边界-V1.0.md)）：`bi-web` 负责装配，业务模块之间通过受控 ApplicationService 接口协作，不跨模块直连 Mapper。
 
-只需 1 分钟即可完成内容网站的后端！！！大家还可以在此基础上快速开发自己的项目。
+| Maven 模块 | 核心职责 | 关键实现 |
+| --- | --- | --- |
+| `bi-common` | 跨模块通用响应、异常、错误码与基础分页 DTO | `BaseResponse`、`BusinessException`、`ErrorCode` |
+| `bi-infra` | MyBatis-Plus、Redisson 分布式限流、CORS 精确源校验、有界线程池、Excel 解析 | `RedisLimiterManager`、`CorsConfig`、`ThreadPoolExecutorConfig` |
+| `bi-ai-runtime` | 独立大模型运行时：协议封装、模型白名单、指数退避重试、多模型自动 Fallback、Token 成本估算 | `ZhipuAiChatClient`、`ResilientAiChatClient`、`AiCostCalculator` |
+| `bi-module-user-biz` | 用户注册、登录、会话与权限拦截 | `UserController`、`UserServiceImpl`、`AuthInterceptor` |
+| `bi-module-file-biz` | 可复用数据集资产管理：表格解析、列画像提取、前 20 行预览与归属校验 | `DatasetController`、`DatasetApplicationServiceImpl`、`BiDataset` |
+| `bi-module-chart-biz` | 图表任务 CRUD、CAS 租约状态机、超时回收、AI 用量账单与 FinOps 汇总查询 | `ChartManagementController`、`ChartApplicationServiceImpl`、`AiUsageLogMapper` |
+| `bi-module-analysis-biz` | Plan-Compute-Explain 分析编排、本地过滤与全量聚合、ECharts 构造、多轮下钻、MQ 消费与超时任务恢复 | `AnalysisTaskApplicationService`、`SpreadsheetAnalysisService`、`WaitingAnalysisTaskRecoveryJob` |
+| `bi-web` | Spring Boot 启动入口与全局配置装配 | `MainApplication`、`application.yml` |
 
-[toc]
+## 关键配置项
 
-## 模板特点
+在 `modules/bi-web/src/main/resources/application.yml` 中已外置敏感凭据，支持通过环境变量或 `local` profile 私有文件配置：
 
-### 主流框架 & 特性
+- `APP_CORS_ALLOWED_ORIGINS`：允许携带 Cookie 的精确前端 Origin（默认 `http://localhost:8000`）。
+- `ANALYSIS_TASK_RECOVERY_INTERVAL_MS`：异步任务超时回收与 `WAITING` 补偿扫描间隔（默认 `30000` ms）。
+- `ANALYSIS_TASK_LEASE_SECONDS`：`RUNNING` 任务租约时长（默认 `120` 秒）。
+- `bi.ai.default-model` / `bi.ai.allowed-models` / `bi.ai.fallback-models`：主模型、白名单与自动降级备用模型链。
+- `bi.ai.retry.*` / `bi.ai.pricing.*`：指数退避参数与各模型百万 Token 单价配置。
 
-- Spring Boot 2.7.x（贼新）
-- Spring MVC
-- MyBatis + MyBatis Plus 数据访问（开启分页）
-- Spring Boot 调试工具和项目处理器
-- Spring AOP 切面编程
-- Spring Scheduler 定时任务
-- Spring 事务注解
+## 编译与测试
 
-### 数据存储
+```bash
+# 全量单元测试（无需外部 MySQL / Redis / AI Key）
+mvn test
 
-- MySQL 数据库
-- Redis 内存数据库
-- Elasticsearch 搜索引擎
-- 腾讯云 COS 对象存储
+# 打包可执行 Jar
+mvn -DskipTests package
 
-### 工具类
-
-- Easy Excel 表格处理
-- Hutool 工具库
-- Gson 解析库
-- Apache Commons Lang3 工具类
-- Lombok 注解
-
-### 业务特性
-
-- Spring Session Redis 分布式登录
-- 全局请求响应拦截器（记录日志）
-- 全局异常处理器
-- 自定义错误码
-- 封装通用响应类
-- Swagger + Knife4j 接口文档
-- 自定义权限注解 + 全局校验
-- 全局跨域处理
-- 长整数丢失精度解决
-- 多环境配置
-
-
-## 业务功能
-
-- 提供示例 SQL（用户、帖子、帖子点赞、帖子收藏表）
-- 用户登录、注册、注销、更新、检索、权限管理
-- 帖子创建、删除、编辑、更新、数据库检索、ES 灵活检索
-- 帖子点赞、取消点赞
-- 帖子收藏、取消收藏、检索已收藏帖子
-- 帖子全量同步 ES、增量同步 ES 定时任务
-- 支持微信开放平台登录
-- 支持微信公众号订阅、收发消息、设置菜单
-- 支持分业务的文件上传
-
-### 单元测试
-
-- JUnit5 单元测试
-- 示例单元测试类
-
-### 架构设计
-
-- 合理分层
-
-
-## 快速上手
-
-> 所有需要修改的地方鱼皮都标记了 `todo`，便于大家找到修改的位置~
-
-### MySQL 数据库
-
-1）修改 `application.yml` 的数据库配置为你自己的：
-
-```yml
-spring:
-  datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/my_db
-    username: root
-    password: 123456
-```
-
-2）执行 `sql/create_table.sql` 中的数据库语句，自动创建库表
-
-3）启动项目，访问 `http://localhost:8101/api/doc.html` 即可打开接口文档，不需要写前端就能在线调试接口了~
-
-![](doc/swagger.png)
-
-### Redis 分布式登录
-
-1）修改 `application.yml` 的 Redis 配置为你自己的：
-
-```yml
-spring:
-  redis:
-    database: 1
-    host: localhost
-    port: 6379
-    timeout: 5000
-    password: 123456
-```
-
-2）修改 `application.yml` 中的 session 存储方式：
-
-```yml
-spring:
-  session:
-    store-type: redis
-```
-
-3）移除 `MainApplication` 类开头 `@SpringBootApplication` 注解内的 exclude 参数：
-
-修改前：
-
-```java
-@SpringBootApplication(exclude = {RedisAutoConfiguration.class})
-```
-
-修改后：
-
-
-```java
-@SpringBootApplication
-```
-
-### Elasticsearch 搜索引擎
-
-1）修改 `application.yml` 的 Elasticsearch 配置为你自己的：
-
-```yml
-spring:
-  elasticsearch:
-    uris: http://localhost:9200
-    username: root
-    password: 123456
-```
-
-2）复制 `sql/post_es_mapping.json` 文件中的内容，通过调用 Elasticsearch 的接口或者 Kibana Dev Tools 来创建索引（相当于数据库建表）
-
-```
-PUT post_v1
-{
- 参数见 sql/post_es_mapping.json 文件
-}
-```
-
-这步不会操作的话需要补充下 Elasticsearch 的知识，或者自行百度一下~
-
-3）开启同步任务，将数据库的帖子同步到 Elasticsearch
-
-找到 job 目录下的 `FullSyncPostToEs` 和 `IncSyncPostToEs` 文件，取消掉 `@Component` 注解的注释，再次执行程序即可触发同步：
-
-```java
-// todo 取消注释开启任务
-//@Component
+# 运行 24 场景架构对比评测并更新评测报告
+mvn -pl modules/bi-module-analysis-biz test -Dtest=BiArchitectureBenchmarkTest -DwriteEvalReport=true
 ```

@@ -137,10 +137,13 @@ const Login: React.FC = () => {
           )}
           <div
             style={{
+              display: 'flex',
+              justifyContent: 'space-between',
               marginBottom: 24,
             }}
           >
             <Link to="/user/register">注册</Link>
+            <Link to="/user/reset-password">忘记密码？</Link>
           </div>
         </LoginForm>
       </div>
