@@ -421,6 +421,15 @@ declare namespace API {
     userPassword?: string;
   };
 
+  type UserEmailLoginCodeRequest = {
+    email?: string;
+  };
+
+  type UserEmailLoginRequest = {
+    code?: string;
+    email?: string;
+  };
+
   type UserBindEmailCodeRequest = {
     email?: string;
   };

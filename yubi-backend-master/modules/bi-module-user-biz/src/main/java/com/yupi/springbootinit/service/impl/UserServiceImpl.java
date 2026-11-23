@@ -261,8 +261,58 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         return true;
     }
 
+    @Override
+    public String requestEmailLoginCode(String email) {
+        if (StringUtils.isBlank(email) || !EMAIL_PATTERN.matcher(email.trim()).matches()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入有效的邮箱地址");
+        }
+        String normalizedEmail = email.trim();
+        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("email", normalizedEmail);
+        User user = this.baseMapper.selectOne(queryWrapper);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "该邮箱尚未绑定任何账号，请先注册或绑定邮箱");
+        }
+        String tokenKey = emailLoginTokenKey(normalizedEmail);
+        String code = passwordResetTokenService.issueCode(tokenKey);
+        boolean sentByMail;
+        try {
+            sentByMail = passwordResetMailService.sendLoginCode(user.getEmail(), user.getUserAccount(), code);
+        } catch (RuntimeException e) {
+            passwordResetTokenService.invalidate(tokenKey);
+            throw e;
+        }
+        return sentByMail ? passwordResetMailService.maskEmail(user.getEmail()) : "DEV_FALLBACK:" + code;
+    }
+
+    @Override
+    public LoginUserVO userLoginByEmail(String email, String code, HttpServletRequest request) {
+        if (StringUtils.isAnyBlank(email, code)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请填写邮箱和 6 位验证码");
+        }
+        String normalizedEmail = email.trim();
+        if (!EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱格式不正确");
+        }
+        QueryWrapper<User> queryWrapper = new QueryWrapper<>();
+        queryWrapper.eq("email", normalizedEmail);
+        User user = this.baseMapper.selectOne(queryWrapper);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "该邮箱尚未绑定任何账号");
+        }
+        passwordResetTokenService.verifyAndConsumeStrict(emailLoginTokenKey(normalizedEmail), code);
+        request.getSession().setAttribute(USER_LOGIN_STATE, user);
+        log.info("[EmailLogin] login succeeded for userAccount={} via email={}",
+                user.getUserAccount(), passwordResetMailService.maskEmail(normalizedEmail));
+        return this.getLoginUserVO(user);
+    }
+
     private String bindEmailTokenKey(Long userId, String normalizedEmail) {
         return "bind:" + userId + ":" + normalizedEmail.toLowerCase();
+    }
+
+    private String emailLoginTokenKey(String normalizedEmail) {
+        return "login:" + normalizedEmail.toLowerCase();
     }
 
     /**

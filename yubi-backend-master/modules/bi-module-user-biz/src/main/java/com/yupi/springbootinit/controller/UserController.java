@@ -15,6 +15,8 @@ import com.yupi.springbootinit.model.dto.user.UserLoginRequest;
 import com.yupi.springbootinit.model.dto.user.UserQueryRequest;
 import com.yupi.springbootinit.model.dto.user.UserBindEmailCodeRequest;
 import com.yupi.springbootinit.model.dto.user.UserBindEmailRequest;
+import com.yupi.springbootinit.model.dto.user.UserEmailLoginCodeRequest;
+import com.yupi.springbootinit.model.dto.user.UserEmailLoginRequest;
 import com.yupi.springbootinit.model.dto.user.UserRegisterRequest;
 import com.yupi.springbootinit.model.dto.user.UserResetCodeRequest;
 import com.yupi.springbootinit.model.dto.user.UserResetPasswordRequest;
@@ -95,6 +97,30 @@ public class UserController {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         LoginUserVO loginUserVO = userService.userLogin(userAccount, userPassword, request);
+        return ResultUtils.success(loginUserVO);
+    }
+
+    /**
+     * 发送邮箱登录验证码
+     */
+    @PostMapping("/login/email-code")
+    public BaseResponse<String> requestEmailLoginCode(@RequestBody UserEmailLoginCodeRequest requestBody) {
+        if (requestBody == null || StringUtils.isBlank(requestBody.getEmail())) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入绑定邮箱");
+        }
+        return ResultUtils.success(userService.requestEmailLoginCode(requestBody.getEmail()));
+    }
+
+    /**
+     * 邮箱验证码登录
+     */
+    @PostMapping("/login/email")
+    public BaseResponse<LoginUserVO> userLoginByEmail(@RequestBody UserEmailLoginRequest requestBody,
+            HttpServletRequest request) {
+        if (requestBody == null || StringUtils.isAnyBlank(requestBody.getEmail(), requestBody.getCode())) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入邮箱和 6 位验证码");
+        }
+        LoginUserVO loginUserVO = userService.userLoginByEmail(requestBody.getEmail(), requestBody.getCode(), request);
         return ResultUtils.success(loginUserVO);
     }
 

@@ -90,6 +90,24 @@ public interface UserService extends IService<User> {
     boolean confirmBindEmail(Long userId, String email, String verifyCode, String userName);
 
     /**
+     * 向已绑定邮箱发送 6 位登录验证码。
+     *
+     * @param email 已绑定邮箱
+     * @return 脱敏后的收件邮箱
+     */
+    String requestEmailLoginCode(String email);
+
+    /**
+     * 通过邮箱验证码校验身份并完成登录。
+     *
+     * @param email   已绑定邮箱
+     * @param code    6 位邮箱验证码
+     * @param request HTTP 请求（用于写入登录会话）
+     * @return 脱敏后的登录用户信息
+     */
+    LoginUserVO userLoginByEmail(String email, String code, HttpServletRequest request);
+
+    /**
      * 获取当前登录用户
      *
      * @param request

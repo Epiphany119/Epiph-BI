@@ -112,6 +112,36 @@ export async function userLoginUsingPOST(
   });
 }
 
+/** requestEmailLoginCode POST /api/user/login/email-code */
+export async function requestEmailLoginCodeUsingPOST(
+  body: API.UserEmailLoginCodeRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseString_>('/api/user/login/email-code', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** userLoginByEmail POST /api/user/login/email */
+export async function userLoginByEmailUsingPOST(
+  body: API.UserEmailLoginRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseLoginUserVO_>('/api/user/login/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
 /** userLogout POST /api/user/logout */
 export async function userLogoutUsingPOST(options?: { [key: string]: any }) {
   return request<API.BaseResponseBoolean_>('/api/user/logout', {
