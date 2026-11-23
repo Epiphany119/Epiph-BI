@@ -29,6 +29,17 @@ public interface UserService extends IService<User> {
     long userRegister(String userAccount, String userPassword, String checkPassword);
 
     /**
+     * 用户注册（支持同时绑定邮箱用于找回密码）
+     *
+     * @param userAccount   用户账户
+     * @param userPassword  用户密码
+     * @param checkPassword 校验密码
+     * @param email         绑定邮箱
+     * @return 新用户 id
+     */
+    long userRegister(String userAccount, String userPassword, String checkPassword, String email);
+
+    /**
      * 用户登录
      *
      * @param userAccount  用户账户
@@ -39,12 +50,13 @@ public interface UserService extends IService<User> {
     LoginUserVO userLogin(String userAccount, String userPassword, HttpServletRequest request);
 
     /**
-     * 签发密码重置验证码（5 分钟有效，60 秒冷却）。
+     * 校验账号与绑定邮箱并发送 6 位 QQ SMTP 重置验证码（5 分钟有效，60 秒冷却）。
      *
      * @param userAccount 用户账号
-     * @return 仅在显式开启本地演示配置时返回验证码，否则返回 null
+     * @param email       用户输入的绑定邮箱
+     * @return 脱敏后的收件邮箱（例如 12***6@qq.com）
      */
-    String requestPasswordResetCode(String userAccount);
+    String requestPasswordResetCode(String userAccount, String email);
 
     /**
      * 校验一次性验证码并重置用户密码。
@@ -56,6 +68,26 @@ public interface UserService extends IService<User> {
      * @return 是否重置成功
      */
     boolean resetPassword(String userAccount, String resetCode, String newPassword, String checkPassword);
+
+    /**
+     * 向待绑定邮箱发送 6 位一次性验证码（5 分钟有效，60 秒冷却）。
+     *
+     * @param userId 当前登录用户 ID
+     * @param email  待绑定邮箱
+     * @return 脱敏后的目标邮箱
+     */
+    String requestBindEmailCode(Long userId, String email);
+
+    /**
+     * 校验一次性验证码后确认绑定邮箱（可选同步更新昵称）。
+     *
+     * @param userId     当前登录用户 ID
+     * @param email      待绑定邮箱
+     * @param verifyCode 6 位邮箱验证码
+     * @param userName   可选新昵称
+     * @return 是否绑定成功
+     */
+    boolean confirmBindEmail(Long userId, String email, String verifyCode, String userName);
 
     /**
      * 获取当前登录用户

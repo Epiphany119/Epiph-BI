@@ -13,6 +13,8 @@ import com.yupi.springbootinit.exception.ThrowUtils;
 import com.yupi.springbootinit.model.dto.user.UserAddRequest;
 import com.yupi.springbootinit.model.dto.user.UserLoginRequest;
 import com.yupi.springbootinit.model.dto.user.UserQueryRequest;
+import com.yupi.springbootinit.model.dto.user.UserBindEmailCodeRequest;
+import com.yupi.springbootinit.model.dto.user.UserBindEmailRequest;
 import com.yupi.springbootinit.model.dto.user.UserRegisterRequest;
 import com.yupi.springbootinit.model.dto.user.UserResetCodeRequest;
 import com.yupi.springbootinit.model.dto.user.UserResetPasswordRequest;
@@ -67,10 +69,11 @@ public class UserController {
         String userAccount = userRegisterRequest.getUserAccount();
         String userPassword = userRegisterRequest.getUserPassword();
         String checkPassword = userRegisterRequest.getCheckPassword();
+        String email = userRegisterRequest.getEmail();
         if (StringUtils.isAnyBlank(userAccount, userPassword, checkPassword)) {
-            return null;
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请填写完整注册信息");
         }
-        long result = userService.userRegister(userAccount, userPassword, checkPassword);
+        long result = userService.userRegister(userAccount, userPassword, checkPassword, email);
         return ResultUtils.success(result);
     }
 
@@ -100,11 +103,11 @@ public class UserController {
      */
     @PostMapping("/password/reset-code")
     public BaseResponse<String> requestPasswordResetCode(@RequestBody UserResetCodeRequest requestBody) {
-        if (requestBody == null || StringUtils.isBlank(requestBody.getUserAccount())) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入用户账号");
+        if (requestBody == null || StringUtils.isAnyBlank(requestBody.getUserAccount(), requestBody.getEmail())) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入用户账号与绑定邮箱");
         }
-        String devCode = userService.requestPasswordResetCode(requestBody.getUserAccount());
-        return ResultUtils.success(devCode);
+        String maskedEmail = userService.requestPasswordResetCode(requestBody.getUserAccount(), requestBody.getEmail());
+        return ResultUtils.success(maskedEmail);
     }
 
     /**
@@ -290,7 +293,39 @@ public class UserController {
     // endregion
 
     /**
-     * 更新个人信息
+     * 发送绑定邮箱验证码（已登录用户绑定/更换邮箱第一步）
+     */
+    @PostMapping("/email/bind-code")
+    public BaseResponse<String> requestBindEmailCode(@RequestBody UserBindEmailCodeRequest requestBody,
+            HttpServletRequest request) {
+        if (requestBody == null || StringUtils.isBlank(requestBody.getEmail())) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入需要绑定的邮箱");
+        }
+        User loginUser = userService.getLoginUser(request);
+        String maskedEmail = userService.requestBindEmailCode(loginUser.getId(), requestBody.getEmail());
+        return ResultUtils.success(maskedEmail);
+    }
+
+    /**
+     * 校验验证码并确认绑定邮箱（已登录用户绑定/更换邮箱第二步）
+     */
+    @PostMapping("/email/bind")
+    public BaseResponse<Boolean> confirmBindEmail(@RequestBody UserBindEmailRequest requestBody,
+            HttpServletRequest request) {
+        if (requestBody == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        User loginUser = userService.getLoginUser(request);
+        boolean result = userService.confirmBindEmail(
+                loginUser.getId(),
+                requestBody.getEmail(),
+                requestBody.getVerifyCode(),
+                requestBody.getUserName());
+        return ResultUtils.success(result);
+    }
+
+    /**
+     * 更新个人信息（禁止通过本接口绕过验证码直接修改邮箱）
      *
      * @param userUpdateMyRequest
      * @param request
@@ -306,6 +341,7 @@ public class UserController {
         User user = new User();
         BeanUtils.copyProperties(userUpdateMyRequest, user);
         user.setId(loginUser.getId());
+        user.setEmail(null);
         boolean result = userService.updateById(user);
         ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         return ResultUtils.success(true);

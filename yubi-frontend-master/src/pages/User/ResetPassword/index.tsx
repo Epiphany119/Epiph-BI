@@ -4,7 +4,7 @@ import {
   resetPasswordUsingPOST,
 } from '@/services/yubi/userController';
 import { Link } from '@@/exports';
-import { LockOutlined, SafetyOutlined, UserOutlined } from '@ant-design/icons';
+import { LockOutlined, MailOutlined, SafetyOutlined, UserOutlined } from '@ant-design/icons';
 import { LoginForm, ProFormText } from '@ant-design/pro-components';
 import { useEmotionCss } from '@ant-design/use-emotion-css';
 import { Helmet, history } from '@umijs/max';
@@ -12,8 +12,12 @@ import { Button, Form, message, Space } from 'antd';
 import React, { useEffect, useState } from 'react';
 import Settings from '../../../../config/defaultSettings';
 
+type ResetFormValues = API.UserResetPasswordRequest & {
+  email?: string;
+};
+
 const ResetPassword: React.FC = () => {
-  const [form] = Form.useForm<API.UserResetPasswordRequest>();
+  const [form] = Form.useForm<ResetFormValues>();
   const [sendingCode, setSendingCode] = useState(false);
   const [cooldown, setCooldown] = useState(0);
 
@@ -39,38 +43,54 @@ const ResetPassword: React.FC = () => {
 
   const handleSendCode = async () => {
     const userAccount = (form.getFieldValue('userAccount') || '').trim();
+    const email = (form.getFieldValue('email') || '').trim();
     if (userAccount.length < 4) {
       message.warning('请先输入至少 4 位用户账号');
       return;
     }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      message.warning('请输入该账号绑定的有效邮箱');
+      return;
+    }
     setSendingCode(true);
     try {
-      const res = await requestPasswordResetCodeUsingPOST({ userAccount });
+      const res = await requestPasswordResetCodeUsingPOST({ userAccount, email });
       if (res.code === 0) {
         setCooldown(60);
-        if (res.data) {
-          form.setFieldValue('resetCode', res.data);
-          message.success(`验证码已生成（开发模式）：${res.data}，5 分钟内有效`);
+        if (typeof res.data === 'string' && res.data.startsWith('DEV_FALLBACK:')) {
+          const fallbackCode = res.data.slice('DEV_FALLBACK:'.length);
+          form.setFieldValue('resetCode', fallbackCode);
+          message.info(
+            `本机代理拦截了 SMTP 端口，已启用本地开发兜底验证码：${fallbackCode}（5 分钟内有效）`,
+            6,
+          );
         } else {
-          message.success('重置验证码已生成，请在后端日志或联系管理员获取（5 分钟内有效）');
+          message.success(
+            `重置验证码已发送至 ${res.data || '绑定邮箱'}，请前往邮箱查收（5 分钟内有效）`,
+          );
         }
       } else {
-        message.error(res.message || '获取验证码失败');
+        message.error(res.message || '发送验证码失败');
       }
     } catch (error: any) {
-      message.error(error?.response?.data?.message || error?.message || '获取验证码失败，请重试');
+      message.error(error?.response?.data?.message || error?.message || '发送验证码失败，请重试');
     } finally {
       setSendingCode(false);
     }
   };
 
-  const handleSubmit = async (values: API.UserResetPasswordRequest) => {
+  const handleSubmit = async (values: ResetFormValues) => {
     if (values.newPassword !== values.checkPassword) {
       message.error('两次输入的新密码不一致');
       return;
     }
     try {
-      const res = await resetPasswordUsingPOST(values);
+      const res = await resetPasswordUsingPOST({
+        userAccount: values.userAccount,
+        resetCode: values.resetCode,
+        newPassword: values.newPassword,
+        checkPassword: values.checkPassword,
+      });
       if (res.code === 0 && res.data) {
         message.success('密码重置成功，请使用新密码登录');
         history.push('/user/login');
@@ -90,7 +110,7 @@ const ResetPassword: React.FC = () => {
         </title>
       </Helmet>
       <div style={{ flex: '1', padding: '32px 0' }}>
-        <LoginForm<API.UserResetPasswordRequest>
+        <LoginForm<ResetFormValues>
           form={form}
           contentStyle={{
             minWidth: 280,
@@ -98,7 +118,7 @@ const ResetPassword: React.FC = () => {
           }}
           logo={<img alt="logo" src="/logo.svg" />}
           title="Epiph-BI"
-          subTitle="忘记密码 · 一次性验证码重置"
+          subTitle="忘记密码 · 邮箱验证码重置"
           submitter={{
             searchConfig: {
               submitText: '重置密码',
@@ -118,6 +138,18 @@ const ResetPassword: React.FC = () => {
               { min: 4, message: '账号长度不能少于 4 位' },
             ]}
           />
+          <ProFormText
+            name="email"
+            fieldProps={{
+              size: 'large',
+              prefix: <MailOutlined />,
+            }}
+            placeholder="请输入该账号绑定的邮箱"
+            rules={[
+              { required: true, message: '请输入绑定邮箱' },
+              { type: 'email', message: '请输入有效的邮箱地址' },
+            ]}
+          />
           <Space.Compact style={{ width: '100%', marginBottom: 24 }}>
             <div style={{ flex: 1 }}>
               <ProFormText
@@ -128,8 +160,8 @@ const ResetPassword: React.FC = () => {
                   prefix: <SafetyOutlined />,
                   maxLength: 6,
                 }}
-                placeholder="请输入 6 位重置验证码"
-                rules={[{ required: true, message: '请输入重置验证码' }]}
+                placeholder="请输入邮箱收到的 6 位验证码"
+                rules={[{ required: true, message: '请输入邮箱验证码' }]}
               />
             </div>
             <Button
@@ -138,7 +170,7 @@ const ResetPassword: React.FC = () => {
               disabled={cooldown > 0}
               onClick={handleSendCode}
             >
-              {cooldown > 0 ? `${cooldown}s 后重试` : '获取验证码'}
+              {cooldown > 0 ? `${cooldown}s 后重试` : '发送邮箱验证码'}
             </Button>
           </Space.Compact>
           <ProFormText.Password

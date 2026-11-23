@@ -39,6 +39,25 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     password: ${RABBITMQ_PASSWORD}
     username: ${RABBITMQ_USERNAME}
+  # QQ 邮箱 SMTP 配置（与 travel-agent 实测可用配置保持一致）；本地凭据请在 application-local.yml 或环境变量中填写
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    protocol: smtp
+    default-encoding: UTF-8
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: false
+      mail.smtp.ssl.enable: true
+      mail.smtp.ssl.trust: smtp.qq.com
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
+      mail.smtp.from: ${MAIL_USERNAME:}
+      mail.mime.charset: UTF-8
+      mail.smtp.allow8bitmime: true
 server:
   address: 0.0.0.0
   port: 8080
@@ -57,12 +76,10 @@ mybatis-plus:
       logic-delete-field: isDelete # 全局逻辑删除的实体字段名
       logic-delete-value: 1 # 逻辑已删除值（默认为 1）
       logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
-# 浏览器凭据请求仅允许明确配置的前端 Origin；忘记密码验证码默认不直接透出给 HTTP 响应。
+# 浏览器凭据请求仅允许明确配置的前端 Origin。
 app:
   cors:
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:8000}
-  auth:
-    return-reset-code-in-response: ${APP_AUTH_RETURN_RESET_CODE:false}
 
 # WAITING 任务由定时恢复器按批补偿；RUNNING 租约超时后自动回收重排或置失败。
 analysis:

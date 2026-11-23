@@ -83,6 +83,11 @@ public class PasswordResetTokenService {
         }
     }
 
+    /** 邮件发送失败时撤销刚签发的验证码，避免用户被误锁 60 秒冷却。 */
+    public void invalidate(String userAccount) {
+        store.remove(normalize(userAccount));
+    }
+
     private String normalize(String userAccount) {
         return userAccount == null ? "" : userAccount.trim().toLowerCase(Locale.ROOT);
     }

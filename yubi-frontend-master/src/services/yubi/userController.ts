@@ -135,6 +135,36 @@ export async function userRegisterUsingPOST(
   });
 }
 
+/** requestBindEmailCode POST /api/user/email/bind-code */
+export async function requestBindEmailCodeUsingPOST(
+  body: API.UserBindEmailCodeRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseString_>('/api/user/email/bind-code', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
+/** confirmBindEmail POST /api/user/email/bind */
+export async function confirmBindEmailUsingPOST(
+  body: API.UserBindEmailRequest,
+  options?: { [key: string]: any },
+) {
+  return request<API.BaseResponseBoolean_>('/api/user/email/bind', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    data: body,
+    ...(options || {}),
+  });
+}
+
 /** requestPasswordResetCode POST /api/user/password/reset-code */
 export async function requestPasswordResetCodeUsingPOST(
   body: API.UserResetCodeRequest,

@@ -239,6 +239,7 @@ declare namespace API {
 
   type LoginUserVO = {
     createTime?: string;
+    email?: string;
     id?: number;
     updateTime?: string;
     userAvatar?: string;
@@ -415,11 +416,23 @@ declare namespace API {
 
   type UserRegisterRequest = {
     checkPassword?: string;
+    email?: string;
     userAccount?: string;
     userPassword?: string;
   };
 
+  type UserBindEmailCodeRequest = {
+    email?: string;
+  };
+
+  type UserBindEmailRequest = {
+    email?: string;
+    userName?: string;
+    verifyCode?: string;
+  };
+
   type UserResetCodeRequest = {
+    email?: string;
     userAccount?: string;
   };
 
@@ -431,6 +444,7 @@ declare namespace API {
   };
 
   type UserUpdateMyRequest = {
+    email?: string;
     userAvatar?: string;
     userName?: string;
     userProfile?: string;

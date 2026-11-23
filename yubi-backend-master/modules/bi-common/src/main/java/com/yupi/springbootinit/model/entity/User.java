@@ -40,6 +40,11 @@ public class User implements Serializable {
     private String userAvatar;
 
     /**
+     * 绑定邮箱（用于找回密码）
+     */
+    private String email;
+
+    /**
      * 用户角色：user/admin
      */
     private String userRole;

@@ -1,6 +1,6 @@
 import Footer from '@/components/Footer';
 import { userRegisterUsingPOST } from '@/services/yubi/userController';
-import { LockOutlined, UserOutlined } from '@ant-design/icons';
+import { LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons';
 import { LoginForm, ProFormText } from '@ant-design/pro-components';
 import { Helmet, history, Link } from '@umijs/max';
 import { message } from 'antd';
@@ -42,6 +42,15 @@ const Register: React.FC = () => {
             fieldProps={{ size: 'large', prefix: <UserOutlined /> }}
             placeholder="请输入账号（至少 4 位）"
             rules={[{ required: true, min: 4, message: '账号至少需要 4 位！' }]}
+          />
+          <ProFormText
+            name="email"
+            fieldProps={{ size: 'large', prefix: <MailOutlined /> }}
+            placeholder="请输入绑定邮箱（用于找回密码）"
+            rules={[
+              { required: true, message: '请输入绑定邮箱！' },
+              { type: 'email', message: '请输入有效的邮箱地址！' },
+            ]}
           />
           <ProFormText.Password
             name="userPassword"

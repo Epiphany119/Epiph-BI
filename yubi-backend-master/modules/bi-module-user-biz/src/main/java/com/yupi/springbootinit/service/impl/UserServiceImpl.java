@@ -14,19 +14,19 @@ import com.yupi.springbootinit.model.entity.User;
 import com.yupi.springbootinit.model.enums.UserRoleEnum;
 import com.yupi.springbootinit.model.vo.LoginUserVO;
 import com.yupi.springbootinit.model.vo.UserVO;
+import com.yupi.springbootinit.service.PasswordResetMailService;
+import com.yupi.springbootinit.service.PasswordResetTokenService;
 import com.yupi.springbootinit.service.UserService;
 import com.yupi.springbootinit.utils.SqlUtils;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
-import me.chanjar.weixin.common.bean.WxOAuth2UserInfo;
 import org.apache.commons.lang3.StringUtils;
-import com.yupi.springbootinit.service.PasswordResetTokenService;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
 
@@ -45,14 +45,22 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      */
     private static final String SALT = "yupi";
 
+    private static final Pattern EMAIL_PATTERN =
+            Pattern.compile("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
+
     @Autowired
     private PasswordResetTokenService passwordResetTokenService;
 
-    @Value("${app.auth.return-reset-code-in-response:false}")
-    private boolean returnResetCodeInResponse;
+    @Autowired
+    private PasswordResetMailService passwordResetMailService;
 
     @Override
     public long userRegister(String userAccount, String userPassword, String checkPassword) {
+        return userRegister(userAccount, userPassword, checkPassword, null);
+    }
+
+    @Override
+    public long userRegister(String userAccount, String userPassword, String checkPassword, String email) {
         // 1. 校验
         if (StringUtils.isAnyBlank(userAccount, userPassword, checkPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
@@ -66,6 +74,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         // 密码和校验密码相同
         if (!userPassword.equals(checkPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "两次输入的密码不一致");
+        }
+        String normalizedEmail = StringUtils.isBlank(email) ? null : email.trim();
+        if (normalizedEmail != null && !EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱格式不正确");
         }
         synchronized (userAccount.intern()) {
             // 账户不能重复
@@ -81,6 +93,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             User user = new User();
             user.setUserAccount(userAccount);
             user.setUserPassword(encryptPassword);
+            user.setEmail(normalizedEmail);
             boolean saveResult = this.save(user);
             if (!saveResult) {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR, "注册失败，数据库错误");
@@ -119,20 +132,36 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public String requestPasswordResetCode(String userAccount) {
+    public String requestPasswordResetCode(String userAccount, String email) {
         if (StringUtils.isBlank(userAccount) || userAccount.trim().length() < 4) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入有效的用户账号（至少 4 位）");
         }
+        if (StringUtils.isBlank(email) || !EMAIL_PATTERN.matcher(email.trim()).matches()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入有效的绑定邮箱");
+        }
         String normalizedAccount = userAccount.trim();
+        String normalizedEmail = email.trim();
         QueryWrapper<User> queryWrapper = new QueryWrapper<>();
         queryWrapper.eq("userAccount", normalizedAccount);
         User user = this.baseMapper.selectOne(queryWrapper);
         if (user == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND_ERROR, "该账号不存在");
         }
+        if (StringUtils.isBlank(user.getEmail())) {
+            throw new BusinessException(ErrorCode.OPERATION_ERROR, "该账号尚未绑定邮箱，无法通过邮件找回密码");
+        }
+        if (!user.getEmail().trim().equalsIgnoreCase(normalizedEmail)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "输入的邮箱与该账号绑定邮箱不一致");
+        }
         String code = passwordResetTokenService.issueCode(normalizedAccount);
-        log.info("[PasswordReset] userAccount={}, code={}, expiresIn=300s", normalizedAccount, code);
-        return returnResetCodeInResponse ? code : null;
+        boolean sentByMail;
+        try {
+            sentByMail = passwordResetMailService.sendResetCode(user.getEmail(), normalizedAccount, code);
+        } catch (RuntimeException e) {
+            passwordResetTokenService.invalidate(normalizedAccount);
+            throw e;
+        }
+        return sentByMail ? passwordResetMailService.maskEmail(user.getEmail()) : "DEV_FALLBACK:" + code;
     }
 
     @Override
@@ -166,6 +195,74 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
         }
         log.info("[PasswordReset] password updated for userAccount={}", normalizedAccount);
         return true;
+    }
+
+    @Override
+    public String requestBindEmailCode(Long userId, String email) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
+        }
+        if (StringUtils.isBlank(email) || !EMAIL_PATTERN.matcher(email.trim()).matches()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请输入有效的邮箱地址");
+        }
+        String normalizedEmail = email.trim();
+        User currentUser = this.getById(userId);
+        if (currentUser == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
+        }
+        QueryWrapper<User> dupQuery = new QueryWrapper<>();
+        dupQuery.eq("email", normalizedEmail).ne("id", userId);
+        if (this.baseMapper.selectCount(dupQuery) > 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "该邮箱已被其他账号绑定");
+        }
+        String tokenKey = bindEmailTokenKey(userId, normalizedEmail);
+        String code = passwordResetTokenService.issueCode(tokenKey);
+        boolean sentByMail;
+        try {
+            sentByMail = passwordResetMailService.sendBindEmailCode(normalizedEmail, currentUser.getUserAccount(), code);
+        } catch (RuntimeException e) {
+            passwordResetTokenService.invalidate(tokenKey);
+            throw e;
+        }
+        return sentByMail ? passwordResetMailService.maskEmail(normalizedEmail) : "DEV_FALLBACK:" + code;
+    }
+
+    @Override
+    public boolean confirmBindEmail(Long userId, String email, String verifyCode, String userName) {
+        if (userId == null || userId <= 0) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
+        }
+        if (StringUtils.isAnyBlank(email, verifyCode)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "请填写邮箱和 6 位验证码");
+        }
+        String normalizedEmail = email.trim();
+        if (!EMAIL_PATTERN.matcher(normalizedEmail).matches()) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱格式不正确");
+        }
+        QueryWrapper<User> dupQuery = new QueryWrapper<>();
+        dupQuery.eq("email", normalizedEmail).ne("id", userId);
+        if (this.baseMapper.selectCount(dupQuery) > 0) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "该邮箱已被其他账号绑定");
+        }
+        String tokenKey = bindEmailTokenKey(userId, normalizedEmail);
+        passwordResetTokenService.verifyAndConsumeStrict(tokenKey, verifyCode);
+
+        User update = new User();
+        update.setId(userId);
+        update.setEmail(normalizedEmail);
+        if (StringUtils.isNotBlank(userName)) {
+            update.setUserName(userName.trim());
+        }
+        boolean updated = this.updateById(update);
+        if (!updated) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "邮箱绑定失败，请稍后重试");
+        }
+        log.info("[BindEmail] bound email {} for userId={}", passwordResetMailService.maskEmail(normalizedEmail), userId);
+        return true;
+    }
+
+    private String bindEmailTokenKey(Long userId, String normalizedEmail) {
+        return "bind:" + userId + ":" + normalizedEmail.toLowerCase();
     }
 
     /**
